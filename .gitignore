@@ -1,10 +1,10 @@
 *.html
 *.zip
 *.pptx
-*.pdf
 .Rhistory
 .Rproj.user/
 data_sets/
 *.Rproj
 videos_afm415/
 */data/*
+*/img/*
