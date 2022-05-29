@@ -14,8 +14,7 @@ Recommended readings:
   
   - [Look at data](https://socviz.co/lookatdata.html#lookatdata)
   - [Get started](https://socviz.co/lookatdata.html#lookatdata)
-+ 
-Khun and Johnson. Feature Engineering and Selection: A Practical Approach for Predictive Models.
++ Khun and Johnson. Feature Engineering and Selection: A Practical Approach for Predictive Models.
 
   - [Exploratory Visualizations](http://www.feat.engineering/exploratory-visualizations.html)
 
