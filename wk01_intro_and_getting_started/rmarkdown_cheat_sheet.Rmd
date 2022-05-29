@@ -1,0 +1,187 @@
+---
+title: "Rmarkdown"
+subtitle: "A Brief Introduction"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Rmarkdown documents are text files that contain text and code. Rmarkdown is based on *markdown*, a simple implementation of a markup specification like HTML. The idea in markdown is that contents and format should be specified separately, in a way similar to HTML and CSS format files separate content and functions from format.
+
+Rmarkdown combines markdown with R. An Rmarkdown file is *knit* into an output format. Knitting an Rmarkdown file produces an output file. Outputs can be HTML documents, PDF documents and articles, MS Word DOCX files, and PowerPoint slide decks, among others. 
+
+Here, we will discuss the basics of Rmarkdown.
+
+# Headings
+
+The headings in your document are specified with '#' tags. A level 1 heading is specified with one `#` preceding the heading title. For example, `# Introduction: Rmarkdown`. A level 2 heading is specified with two `#` symbols, for instance `## Semantic Tags`. Similarly, for further levels. 
+
+## Semantic Tags
+
+Headings are semantic tags. From [MDN Web Docs](https://developer.mozilla.org/en-US/docs/Glossary/Semantics):
+
+> In programming, Semantics refers to the meaning of a piece of code — for example "what effect does running that line of JavaScript have?", or "what purpose or role does that HTML element have" (rather than "what does it look like?".) [...] In HTML, for example, the \<h1> element is a semantic element, which gives the text it wraps around the role (or meaning) of "a top level heading on your page.
+
+This is important to remember, as headings will give structure to your document. Structure will be reflected in the organization and clarity of your ideas and results. As well, semantic tags such as `#` will be reflected in the table of contents of your document. More importantly, well-specified headers will enhance your output's accessibility by providing meaningful and simple navigation. 
+
+# Text Formatting
+
+Simple text (a new line starting with a character) is generally interpreted as 'normal' text. **Bold** formatting can be added with enclosing words with `**`, for example `**Bold**`. *Italics* are achieved with single `*`, for example `*Italics*`.  
+
+# Lists
+
+Lists can be unordered or ordered.
+
+## Unordered Lists: Bullet Points
+
+Bullet points can be added with `+`, `-`, or `*` preceding each item. You can indent each line to achieve different levels. For example:
+
+```
++ This a first idea
+  - A good idea because x
+  - But one must consider y
++ A second idea
+  - Great idea, but costly
+  - Risky investment because:
+    * One reason
+    * Another reason
++ A third idea
+  - May work
+  - Not a big investment
+  - Does not scale
+```
+
+The code above will produce the following list:
+
++ This a first idea
+  - A good idea because x
+  - But one must consider y
++ A second idea
+  - Great idea, but costly
+  - Risky investment because:
+    * One reason
+    * Another reason
++ A third idea
+  - May work
+  - Not a big investment
+  - Does not scale
+
+## Ordered Lists
+
+Ordered or numbered lists start with a number followed by a period.
+
+1. One
+2. Two
+3. Three
+
+# Links and urls
+
+Links can be added by enclosing text in `[]` followed by the URL enclosed in `()`. For example, this [very interesting link](http://archive.ics.uci.edu/ml/index.php) is produced with `[very interesting link](http://archive.ics.uci.edu/ml/index.php)`.
+
+# Output Specs
+
+The Rmarkdown file has an initial section enclosed by `---`. This section specifies the formatting template that will be used in the output. If the output is HTML, this section will specify the CSS that will be used to produce the output. Most fields are self-explanatory: `title`, `author`, `date`.
+
+## Output Templates
+
+Output template specify the type of file that you will obtain. Two notable output templates are `html_document` and `word_document`. You can also output to a `pdf_document`, but that may require you to install other packages and is out of scope for our course.
+
+We will work mostly in HTML, but some of the options below also apply to Word output.
+
+## Table of contents
+
+Add a table of contents by setting the value of `toc` to`TRUE` within `html_document`. To produce a floating table of contents, also set the value of `toc_float` to `TRUE`. For example:
+
+```
+---
+title: "A title"
+subtitle: "A subtitle"
+author: "An Author"
+date: "01/11/2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+---
+```
+
+## Themes
+
+We can also specify a CSS theme. You can use any of the following standard themes: “cerulean”, “cosmo”, “flatly”, “journal”, “lumen”, “paper”, “readable”, “sandstone”, “simplex”, “spacelab”, “united”, and “yeti”.
+
+```
+---
+title: "A title"
+subtitle: "A subtitle"
+author: "An Author"
+date: "01/11/2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: cerulean
+---
+```
+
+# Code Chunks
+
+In Rmarkdown, code is contained in code chunks. Code chunks are enclosed by triple back quotes or back ticks (\`, the key below the escape key in a standard English keyboard). The top delimiter is followed by `{r a_user_defined_label, [option = value]}`. Inside this code chunk, you can execute R code.
+
+```{r example_1}
+library(tidyverse)
+dt = tibble(numbers = rnorm(10000), 
+            letters = sample(LETTERS[1:5], 10000, replace = TRUE))
+
+dt %>% ggplot(aes(x =numbers )) +
+  geom_histogram(bins = 100) +
+  labs(title = 'A histogram of random numbers', 
+       subtitle = '10,000 normally distributed values', 
+       x = '')
+  
+```
+
+You can read more in [2.6 R code chunks and inline R code] from Xie, Allaire, Grolemund (2020).
+
+# Tables
+
+You can display HTML formatted tables using `kable()` from the library `knitr`.
+
+```{r tables}
+library(knitr)
+
+dt %>%
+  head() %>%
+  kable(digits = 4)
+```
+
+Consider the different between the table above and the unformatted output:
+
+```{r unformatted}
+dt %>%
+  head()
+```
+
+# Tips
+
+A few tips about code Rmarkdown documents:
+
++ Add a blank line between everything: paragraphs, titles, code chunks, lists, etc. 95% of your formatting issues will be solved by adding blank lines.
++ Specify only one output per code chunk. End the code chunk with the output statement. Outputs can be graphs or tables.
+
+
+Finally, when you write your reports think about your audience: highlight interesting observations, add an introduction, refer to long tables at the end. 
+
+# Rmarkdown Resources
++ R Studio's [RMarkdown::Cheat Sheet](https://raw.githubusercontent.com/rstudio/cheatsheets/master/rmarkdown-2.0.pdf).
++ R Studio's [RMarkdown Reference Guide](https://rstudio.com/wp-content/uploads/2015/03/rmarkdown-reference.pdf?_ga=2.173199968.291305983.1610597093-1074890919.1610597093).
++ Xie, Allaire, Grolemund (2020). [R Markdown: The Definitive Guide](https://bookdown.org/yihui/rmarkdown/)
+.

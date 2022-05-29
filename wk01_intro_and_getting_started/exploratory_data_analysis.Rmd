@@ -1,0 +1,161 @@
+---
+title: "An Introduction to data manipulation and ggplot"
+author: "Jesús Calderón"
+date: "January 2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Introduction
+
+In this document, we will examine techniques for filtering and plotting data.
+
+First, load the libraries that we will use and some data from gapminder.org:
+
+```{r load_libraries_data}
+# Load libraries
+library(tidyverse)
+library(knitr)
+
+# Data
+library(gapminder) # no functions, only data
+data(gapminder)
+```
+
+# Quick Views
+
+## Glimpse
+
+Function `glimpse()` affords a quick way of examining the structure (variables and their types) of a tibble, as well as a few sample values.
+
+```{r glimpse}
+glimpse(gapminder)
+```
+
+
+## Head
+
+The function `head()` will display the first few rows of a tibble. 
+
+```{r head}
+gapminder %>% 
+  head()
+```
+
+## Summary
+
+The function `summary()` gives us basic statistics of each variable in our tibble.
+
+```{r summary}
+gapminder %>%
+  summary()
+```
+
+
+# Data manipulation
+
+## Summarise
+
+A more powerful and flexible summary can be obtained with the function `summarise()`. Notice how we can call each column directly by its name in the tidyverse. 
+
+Notice that summarise takes a tibble and reduces its dimensions.
+
+```{r summarise}
+gapminder %>%
+  summarise(avg_life_expectncy = mean(lifeExp),
+            median_life_expectancy = median(lifeExp),
+            avg_gpd_per_capita = mean(gdpPercap),
+            median_gdp_per_capita = median(gdpPercap)) %>%
+  kable()
+```
+
+# Grouped Operations
+
+We can operate by groups using `group_by()`. For example, we can obtain a grouped summary by combining `group_by()` and `summarise()`.
+
+
+```{r group_by_summarise}
+summary_life_exp_by_continent <- gapminder %>%
+        group_by(continent) %>%
+        summarise(median_lifeExp = median(lifeExp),
+                  iqr_lifeExp = IQR(lifeExp),
+                  .groups = 'drop_last')
+
+summary_life_exp_by_continent %>%
+        kable(digits = 1)
+```
+
+We can also group by several variables: we can calculate the average life expectancy by continent and year.
+
+```{r life_exp_continent_year}
+life_exp_continent_year <- gapminder %>%
+  group_by(continent, year) %>%
+    summarise(avg_lifeExp = mean(lifeExp)) 
+
+life_exp_continent_year %>%
+  kable()
+```
+
+
+**The table above is too long and can be better placed in an appendix.** Notice that we could do so by moving only the lines that display (not calculate) the tables to the end of the document.
+
+Alternatively, when we have too much data, we can use a visual display such as a graph.
+
+```{r life_exp_continent_year_plot}
+
+life_exp_continent_year %>%
+  ggplot(aes(x = year, y=avg_lifeExp, color = continent)) + 
+  geom_line() + 
+  geom_point() +
+  labs(title ='Mean Life Expectancy by Continent',
+       x = 'Year', 
+       y = 'Mean Life Expectancy')
+```
+
+# Filter
+
+We can also filter some rows. For example, if we want to obtain only the observations from the Americas, we can write:
+
+```{r filter}
+
+americas_dt <- gapminder %>%
+  filter(continent == 'Americas') 
+
+americas_dt %>%
+  kable()
+```
+
+
+**Again, move long tables to the end.** Don't leave them in the body of the text. A plot is a better option:
+
+```{r americas_plot}
+
+americas_dt %>%
+  ggplot(aes(x = as_factor(year), y = lifeExp)) + 
+  geom_boxplot() + 
+  labs(title = 'Life Expectancy Distribution', 
+       subtitle = 'Americas Only', 
+       x = 'Year', 
+       y = 'Life Expectancy')
+
+```
+
+# Facet Wrapping
+
+We may also want to reproduce the chart above for all continents. We can do this easily with facetting, using the command `facet_wrap()`.
+
+```{r facet_wrap, fig.width = 14}
+gapminder %>%
+  ggplot(aes(x = as_factor(year), y = lifeExp)) + 
+  geom_boxplot() + 
+  labs(title = 'Life Expectancy Distribution', 
+       subtitle = 'All Continents', 
+       x = 'Year', 
+       y = 'Life Expectancy') +
+  facet_wrap(~continent, nrow = 1) +
+  theme(axis.text.x = element_text(angle = 90))
+  
+```

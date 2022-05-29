@@ -1,0 +1,179 @@
+---
+title: "Assignment 1 - Exploratory Data Analysis"
+output: 
+  html_document:
+    theme: "united"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE)
+```
+
+In this assignment, we will work through an Exploratory Data Analysis based on the Gapminder data set. Please include a report with the sections outlined below.
+
+Our objective is to understand the Gapminder data set and:
+
++ Characterize the data set using visualization and descriptive statistics.
++ Generate questions about the data.
+
+
+**Submission:** 
+
++ Please produce a Rmarkdown document with your results and submit both the Rmd and HTML files for your report. 
++ Do not hide your code in your report, please (i.e., set echo=TRUE). This facilitates my review.
++ Remember that formatting counts: spend a few minutes beautifying your submission by selecting a theme that you like, as well as adding a floating table of contents.  
++ You can submit as many times as you want; your mark will be based on your files' latest version. Feel free to add a note to your submission if you need to make clarifications.
+
+
+# Introduction
+
+Introduce the Gapminder data set. At a minimum, please include:
+
++ Source of the data.
++ Number of observations and variables.
++ A brief overview of the variables included in the data. Include only a few lines describing the *meaning* or *definition* of each variable.
++ A brief introduction of your report, including its objectives. 
+
+*Hint:* you can find more about this data set by using `?gampiminder` in your console after executing `library(gapminder)`.
+
+In this section, you may also want to include a code chunk where you load the required libraries and the data.
+
+```{r load_libraries_and_data, echo = FALSE}
+library(tidyverse)
+library(knitr)
+library(gapminder)
+
+data(gapminder)
+```
+
+# Variable Description
+
++ In this section, distinguish and identify (report which variables fall into each category) between two types of variables:
+
+  - Identifiers: these are labels that identify the observation. They are not measured but directly observed; they are not random and generally include names, dates, organizations, etc. Identifiers should typically not have missing values.
+  - Metrics: these are measured values and can be generally interpreted as the values of random variables. Typically we would see quantities or labels that do not refer to the observation's identity (for example, yearly income, amount of rainfall in a day, the value of risk measures, etc.)
+
+## Identifiers
+
++ For each identifier, calculate the unique number of values. 
++ Report the unique values. If the list is too long, either add it in an Appendix or show a sample of the data points.
++ Verify that there are no missing values.
++ Do you think that identifiers should be analyzed individually, as a group, or both? Why?
+
+**Hint:** Consider the data below. In this data, the identifiers are `first_name` and `last_name`.
+
+```{r dt_example}
+dt <- tibble(first_name = c('Alice', 'Bob', 'Carla', 'David', 'Elisa'),
+             last_name = c('Abrahams', 'Elroy', 'Calderon', 'Abrahams', 'Elroy'),
+             age = c(25, 20, 19, 23, 23),
+             height = c(175, 160, 156, 180, 201))
+
+dt %>%
+  kable()
+```
+
+You can obtain the number of unique items in each identifier with:
+
+```{r unique_identifiers}
+unique_ids <- dt %>%
+  summarise(unique_first_names = n_distinct(first_name),
+            unique_last_names = n_distinct(last_name),
+            unique_full_names = n_distinct(first_name, last_name))
+
+unique_ids %>%
+  kable()
+```
+
+
+You can obtain the unique values of each variable with:
+
+```{r unique_vals}
+unique_last_name <- dt %>% 
+  select(last_name) %>% # Alternatively, you can try pull(last_name) instead of this line.
+  unique() 
+
+unique_last_name %>%
+  kable()
+```
+
+If you include two or more values in the `select()` statement, you will get all unique combinations.
+
+## Metrics
+
++ For each metric, please calculate at an overall level:
+
+  -  Minimum (`min(x)`, where `x` is the variable's name)
+  -  1st quartile, also known as the 25th quantile (`quantile(x, 0.25)`)
+  -  Median (`median(x)`)
+  -  Mean (`mean(x)`)
+  -  3rd quartile, also known as the 75th quantile (`quantile(x, 0.75)`)
+  -  Maximum (`max(x)`)
+  -  Standard Deviation (`sd(x)`)
+  -  Inter-Quartile Range (`IQR(x)`)
+
++ For each metric, calculate the statistics above grouped by `continent`.
++ For each metric and based on your calculations from the previous point, is there an indication of outliers? Why?
++ Plot a histogram of the values of each metric.
++ Build a boxplot showing each metric's distribution: do so by faceting per continent and showing the distribution of all countries per year. 
++ What are the salient features of this variable? Do you see any trends? Are there any observations that are worth exploring further?
+
+*Hint:* Following the previous examples, consider the following descriptive statistics of the variable age:
+
+```{r hint_metrics}
+desc_age <- dt %>%
+  summarise(q1_age = quantile(age, 0.25),
+            med_age = median(age),
+            q2_age = quantile(age, 0.75))
+
+desc_age %>%
+  kable()
+```
+
+*Hint:* This is one potential answer for one variable. Notice how each year is mapped to a single position, you can achieve this by using the following aesthetic mapping within `ggplot()`: `aes(x = as_factor(year), y = gdpPercap))`
+
+```{r sample_plot, echo = FALSE}
+gapminder %>%
+  ggplot(aes(x = as_factor(year), y = gdpPercap)) + 
+  geom_boxplot() + 
+  facet_wrap(~continent) + 
+  coord_flip() +
+  labs(title = 'GDP per Capita', 
+       y = 'GDP Per Capita (USD, inflation-adjusted)', 
+       x = 'Year')
+```
+
+# Relationship Between Variables
+
++ In this section, we will work with two variables: life expectancy and GDP per capita.
++ Calculate their linear correlation and report it.
++ Construct a scatter plot (`geom_point()`) with one of your selected metrics per axis. Facet the data set based on year and colour-code based on the continent.
++ Please discuss: What is notable about this chart? Please describe ('tell us a story with data') your conclusions: what can you say about life expectancy? About GDP per capita? About the relationship between these variables? Is the story consistent across continents?
+
+*Hint:* a correlation matrix can be calculated as below.
+
+```{r correl}
+dt %>% 
+  select(age, height) %>% 
+  cor()
+```
+
+*Hint:* this is a potential solution for the third bullet point.
+
+```{r scatter_facet, echo = FALSE, fig.height = 8, fig.width = 10}
+gapminder %>%
+  ggplot(aes(x = lifeExp, y = gdpPercap, colour = continent)) +
+  geom_point() + 
+  facet_wrap(~year, scales = 'free_y') + 
+  labs(title = 'Life Expectancy and GDP per Capita', 
+       x = 'Life Expectancy', 
+       y = 'GDP per capita') + 
+  theme(legend.position = 'bottom')
+```
+
+# Conclusion
+
+Given that this is an Exploratory Analysis, its conclusion should be a list of questions that you think could be further studied and discovered through this analysis. Propose three questions or areas for further study.
+
+# Additional Reference
+
+[Chapter 7 of R for Data Science](https://r4ds.had.co.nz/exploratory-data-analysis.html) contains excellent advice and ideas on how to perform an Exploratory Data Analysis using R. 
