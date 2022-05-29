@@ -1,0 +1,464 @@
+---
+title: "Support Vector Machine: Polynomial SVM"
+subtitle: "The Office Rating Prediction"
+author: "Jesús Calderón"
+date: "20/03/2021"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+```
+
+# Main Points
+
+In this document we will discuss:
+
++ How to tune a Polynomial SVM model.
++ How to tune perform a Bayesian Search. 
+
+# Load Libraries and Data
+
+We load the data that we prepared previously. You may need to `install.packages('baguette')`.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_metrics <- metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+
+# Build a Support Vector Machine Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+## Recipe
+
+```{r}
+office_svm_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_normalize(andy:jan, -all_outcomes()) %>%
+  step_corr(andy:jan, -all_outcomes()) %>%
+  step_BoxCox(andy:jan, -all_outcomes())
+```
+
+# Model: SVM with a polynomial kernel
+
+The model that we will work with is  `svm_poly()`, a polynomial SVM. The tuning parameters are:
+
+  - `cost`: cost of predicting a sample within or on the wrong side of the margin.
+  - `margin`: the epsilon in the SVM insensitive loss function (regression only).
+  - `degree` of the polynomial.
+  - `scale_factor` for the polynomial kernel.
+
+You may need to upgrade the parsnip library to version 0.1.6 or higher to run the following code.
+
+```{r}
+svm_poly_mod <- 
+  svm_poly(cost = tune(),
+           margin = tune(),
+           degree = tune(),
+           scale_factor = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kernlab')
+
+
+svm_poly_wf <- 
+  workflow() %>%
+  add_recipe(office_svm_rec) %>%
+  add_model(svm_poly_mod)
+```
+
+
+# Tuning with Bayesian Optimization
+
+Given the complexity of this search, we will approach it with a probabilistic method: Bayesian optimization. 
+
+
+
+Bayesian optimization ([tidymodels.org](https://www.tidymodels.org/learn/work/bayes-opt/)):
+
++ Is a sequential method that uses a model to predict new candidate parameters for assessment.
++ Predicts mean and variance of performance. These quantities are used as inputs to an *acquisition function*, which will guide the search by determining the next set of parameters to test. 
+
+An [acquisition function](https://tune.tidymodels.org/articles/acquisition_functions.html) establishes a relationship between expected mean and variance of performance and new hyperparamter candidate values. Variance is high in regions that have not yet been tested, and low in regions near tested paramters. 
+
+Bayesian optimization is a sequential approach that evaluates points in a grid by using a strategy that balances two factors:
+
++ Exploitation: search will focus in areas where the previous (known) best results occurred.
++ Exploration: search will consider candidates in untested regions.
+
+Most acquisition functions have tuning parameters that control the tradeoff between exploitation and exploration.
+
+In this example we will use an *acquisition function* called *expected improvement*.
+
+# Tuning Linear SVM using Grid Search
+
+We get the parameter set.
+
+```{r}
+svm_poly_params <- 
+  svm_poly_wf %>%
+  parameters()
+
+svm_poly_params
+```
+
+This specification will help us run the Bayesian optimization search. 
+
+Tune the model using the grid.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+We time the process using the library tictoc.
+
+```{r}
+bayes_ctrl <- control_bayes(no_improve = 10,
+                            save_pred = TRUE, 
+                            seed = 1234)
+
+tic()
+svm_poly_res <-
+  svm_poly_wf %>%
+  tune_bayes(
+    office_folds, 
+    param_info = svm_poly_params,
+    initial = 10, 
+    iter = 35,
+    metrics = perf_metrics, 
+    control = bayes_ctrl
+  )
+toc()
+```
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+# Results
+
+## Performance
+
+First, we look at the evolution of performance as the search progresses.
+
+```{r}
+svm_poly_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = .iter, y = mean)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err),
+        color = 'grey35'
+  ) + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Bayesian Optimization', 
+       x = 'Iteration', y = 'Performance Score')
+
+```
+
+## Parameters
+
+The evolution of parameters over each iteration is shown below.
+
+```{r}
+svm_poly_res %>%
+  collect_metrics() %>%
+  pivot_longer(cost:margin,
+               names_to = 'param',
+               values_to = 'value') %>%
+  ggplot(aes(x = .iter, y = value)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  facet_wrap(~param, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+## Hyperparams and Performance
+
+Removing the iterations, we can see better the relationship between performance and hyperparamters is better.
+
+```{r}
+svm_poly_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = cost, 
+             y = mean,
+             colour = margin)) +
+  geom_point() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Tuning Cost and Margin', 
+       x = 'Cost', y = 'Performance Score')
+```
+
+```{r}
+svm_poly_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = as_factor(degree), 
+             y = mean,
+             colour = scale_factor)) +
+  geom_boxplot(outlier.alpha = 0) + 
+  geom_point(position = position_jitter(width = 0.25)) + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Tuning Degree and Scale Factor', 
+       x = 'Degree', y = 'Performance Score')
+```
+
+The top performing models by RMSE are:
+
+```{r}
+svm_poly_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3,
+        caption = 'Top-Performing Linear SVM Models by RMSE')
+```
+
+
+# Refinement
+
+Based on previous experiments, we want to restrict the region to explore. For this we use the command `update()`.
+
+```{r}
+svm_poly_params_2 <- 
+  svm_poly_params %>%
+  update(
+    cost = cost(range = c(-6, 0)),
+    margin = svm_margin(range = c(0.15, 0.25)),
+    degree = degree(range = c(2, 5))
+  )
+```
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tic()
+svm_poly_res_2 <-
+  svm_poly_wf %>%
+  tune_bayes(
+    office_folds, 
+    param_info = svm_poly_params_2,
+    initial = 10, 
+    iter = 20,
+    metrics = perf_metrics, 
+    control = bayes_ctrl
+  )
+toc()
+
+stopCluster(cl)
+```
+
+
+# Results (Part 2)
+
+## Performance
+
+Performance progress per iteration.
+
+```{r}
+svm_poly_res_2 %>%
+  collect_metrics() %>%
+  ggplot(aes(x = .iter, y = mean)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err),
+        color = 'grey35'
+  ) + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Bayesian Optimization', 
+       x = 'Iteration', y = 'Performance Score')
+
+```
+
+The evolution of parameters over each iteration is shown below.
+
+```{r}
+svm_poly_res_2 %>%
+  collect_metrics() %>%
+  pivot_longer(cost:margin,
+               names_to = 'param',
+               values_to = 'value') %>%
+  ggplot(aes(x = .iter, y = value)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  facet_wrap(~param, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+## Hyperparams and Performance
+
+Removing the iterations, we can see better the relationship between performance and hyperparamters is better.
+
+```{r}
+svm_poly_res_2 %>%
+  collect_metrics() %>%
+  ggplot(aes(x = cost, 
+             y = mean,
+             colour = margin)) +
+  geom_point() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Tuning Cost and Margin', 
+       x = 'Cost', y = 'Performance Score')
+```
+
+```{r}
+svm_poly_res_2 %>%
+  collect_metrics() %>%
+  ggplot(aes(x = degree, 
+             y = mean,
+             colour = scale_factor)) +
+  geom_point() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Tuning Degree and Scale Factor', 
+       x = 'Degree', y = 'Performance Score')
+```
+
+The top performing models by RMSE are:
+
+```{r}
+svm_poly_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3,
+        caption = 'Top-Performing Linear SVM Models by RMSE')
+```
+
+# Model Selection
+
+We select the best model by RMSE.
+
+```{r}
+svm_poly_best <- 
+  svm_poly_res_2 %>%
+  select_best( metric = 'rmse')
+svm_poly_best %>%
+  kable(digits = 3, 
+        caption = 'Top-Performing Model by RMSE')
+```
+
+
+```{r}
+svm_poly_by_se <- 
+  svm_poly_res_2 %>%
+  select_by_one_std_err(metric = 'rmse', 'degree')
+svm_poly_by_se %>%
+  kable(digits = 3, 
+        caption = 'Top Performing Model Adjusted by SE (RMSE)')
+```
+
+```{r}
+svm_poly_res_2 %>%
+  collect_predictions(parameters = svm_poly_best) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+svm_poly_final <-
+  svm_poly_wf %>%
+  finalize_workflow(svm_poly_best)
+
+svm_poly_fit <- svm_poly_final %>%
+  fit(office_train)
+
+svm_poly_fit
+```
+
+# Save Model Objects
+
+```{r}
+save(svm_poly_fit, svm_poly_res, svm_poly_wf, 
+     file = './data/svm_poly_res.Rda')
+```
