@@ -1,0 +1,151 @@
+---
+title: "Regression Performance with CV"
+subtitle: 'Part 0 - The Wrong Way'
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Advertising Data
+
+In this module, we revisit the [Advertising](https://www.statlearning.com/resources-first-edition) data set. 
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+
+ad_dt <- read_csv('./data/Advertising.csv') %>%
+  select(-X1)
+
+ad_dt %>%
+  ggpairs()
+```
+
+
+# An Initial (Semi-Manual) Approach
+
+Assume we would like to perform *model selection*. In this case, we are interested in determining an optimal *k* for a k-NN model. We would like to choose among different options: 3, 6, 12, and 24 neighbours.
+
+## Data Split and Recipe
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split:
+
+```{r}
+set.seed(123)
+ad_split <- initial_split(ad_dt, prop = 0.7)
+ad_train <- training(ad_split)
+ad_test <- testing(ad_split)
+```
+
+## Recipe: data preparation
+
+In this section, we will define a recipe that will establish:
+
++ The model's formula in R (using `~`).
++ Data preprocessing steps, if required (e.g., `step_dummy()` or `step_corr()`).
+
+In this case, we will use a simple recipe. Notice that we removed `X1` at the loading step. Now we will use `sales ~ .` to mean that we want to predict `sales` based on all other variables in the tibble. For simplicity, we will not use any other preprocessing step.
+
+```{r}
+ad_rec <- 
+  recipe(sales ~ ., data = ad_train)
+```
+
+## Models
+
+Now, lets create our candidate models. All of them will be k-NN with regression mode as well as `kknn` engine. We will create the models in two parts: a common base and then specific arguments.
+
+```{r}
+knn_base <- 
+  nearest_neighbor() %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+
+knn_3 <- knn_base %>% set_args(neighbors=3)
+knn_6 <- knn_base %>% set_args(neighbors=6)
+knn_12 <- knn_base %>% set_args(neighbors=12)
+knn_24 <- knn_base %>% set_args(neighbors=24)
+```
+
+
+## Workflow
+
+We put together recipe and models through workflows:
+
+```{r}
+wf_knn_3 <- workflow() %>% add_recipe(ad_rec) %>% add_model(knn_3) 
+wf_knn_6 <- workflow() %>% add_recipe(ad_rec) %>% add_model(knn_6) 
+wf_knn_12 <- workflow() %>% add_recipe(ad_rec) %>% add_model(knn_12) 
+wf_knn_24 <- workflow() %>% add_recipe(ad_rec) %>% add_model(knn_24) 
+```
+
+## Create Folds for k-Fold Cross-Validation
+
+Now, we define our folds for k-fold CV. We use the command `vfold_cv()` to create the folds. We pass two parameters to this function: `v` determines the number of folds and `strata` indicates the stratification variable (in this case, `sales`).
+
+```{r}
+set.seed(456)
+ad_folds <- ad_train %>%
+  vfold_cv(v=5, strata=sales)
+```
+
+## Define Metrics Set
+
+In this case, we are interested in minimizing prediction error. We would like to examine RMSE and MAPE. We can define an ad-hoc set of performance measures.
+
+```{r}
+perf_meas <- metric_set(rmse, mape, rsq)
+```
+
+## Perform CV
+
+We perform cross validation by calling the `fit_resamples()` command. This command is similar to `fit()`, but instead it expects a resampling definition such as the one that we created above, `ad_folds`.
+
+```{r}
+knn3_cv <- wf_knn_3 %>% fit_resamples(ad_folds, metrics = perf_meas)
+knn6_cv <- wf_knn_6 %>% fit_resamples(ad_folds, metrics = perf_meas)
+knn12_cv <- wf_knn_12 %>% fit_resamples(ad_folds, metrics = perf_meas)
+knn24_cv <- wf_knn_24 %>% fit_resamples(ad_folds, metrics = perf_meas)
+```
+
+## Collect Metrics
+
+Now, we will collect the metrics from the CV runs. We can use the function `collect_metrics()` for this purpose.
+
+```{r}
+ad_res <- list()
+ad_res[['knn3']] <- knn3_cv %>% collect_metrics()
+ad_res[['knn6']] <- knn6_cv %>% collect_metrics()
+ad_res[['knn12']] <- knn12_cv %>% collect_metrics()
+ad_res[['knn24']] <- knn24_cv %>% collect_metrics()
+
+ad_perf <- bind_rows(ad_res, .id='model')
+```
+
+## Plot Results
+
+```{r}
+ad_perf %>%
+  mutate(model = fct_inorder(model)) %>%
+  ggplot(aes(x=model, y=mean)) +
+  geom_bar(stat='identity') +
+  facet_wrap(~.metric, scales ='free_y') + 
+  theme_minimal() +
+  labs(title = 'Performance Metrics',
+       subtitle = 'Sales Prediction from Ad Spending')
+  
+```
+
+
+# Conclusion
+
+There must be a better way ... 

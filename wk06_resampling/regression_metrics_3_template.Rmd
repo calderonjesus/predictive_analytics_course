@@ -1,0 +1,212 @@
+---
+title: "Tuning Hyperparameters with tidymodels"
+subtitle: "Part 2 - Building a Repeatable Process"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Advertising Data
+
+As before, in this module, we revisit the [Advertising](https://www.statlearning.com/resources-first-edition) data set. 
+
+
+```{r}
+
+```
+
+## Metrics
+
+We  define the performance metrics that we are interested in extracting via `metric_set()`. We will optimize by MAPE, but we would like to get information on the other metrics.
+
+```{r}
+
+```
+
+## Data Split and Folds
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split, as well as 5-fold cross-validation.
+
+```{r}
+
+```
+
+
+# Recipes
+
+In this section, we will define a recipe that will establish:
+
++ The model's formula in R (using `~`).
++ Data pre-processing steps, if required (e.g., `step_ns()`).
+
+In this case, we will use a simple recipe. Notice that we removed `X1` at the loading step. We will use `sales ~ .` to mean that we want to predict `sales` based on all other variables in the tibble. 
+
+```{r}
+
+```
+
+# Models
+
+Now, let's create our candidate models. We will use two types of models: non-parametric (kNN) and parametric (linear regression). Each type of model will be tuned using 5-fold cross validation.
+
+The k-NN models are given by:
+
+```{r}
+
+```
+
+The linear regression models are given by:
+
+```{r}
+
+```
+
+
+# Worfklow Tuning and Assessment
+
+## Workflow knn1
+
+```{r}
+
+```
+
+### Parameter Grid knn1
+
+```{r}
+
+```
+
+### Tune Grid knn1
+
+```{r}
+
+
+```
+
+### Top Performance
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+## Workflow knn2
+
+```{r}
+
+```
+
+### Parameter Grid knn1
+
+```{r}
+
+```
+
+### Tune Grid knn2
+
+```{r}
+
+```
+
+### Optimal Params
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Workflow lr1
+
+```{r}
+
+```
+
+### Parameter Grid lr1
+
+```{r}
+
+```
+
+### Tune Grid lr1
+
+```{r}
+
+```
+
+### Optimal Params
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+## Workflow lr2
+
+```{r}
+
+```
+
+### Parameter Grid lr2
+
+```{r}
+
+```
+
+### Tune Grid lr2
+
+```{r}
+
+
+```
+
+### Top Params
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+# Conclusion
+
+We have found the best choices for parametric and non-parametric models via model selection and assessment. As a final step, we will verify the performance of the top models:
+
+
+## Finalize and Test k-NN
+
+This is a k-NN model. It is a non-parametric estimate that is very flexible. It is a somewhat accurate model, but it is not very explainable.
+
+
+```{r}
+
+```
+
+
+## Finalize and Test Linear Regression
+
+A more explainable, but less accurate model. It still may perform good enough, particularly for samples that are novel and different from the training set.
+
+```{r}
+
+```
+

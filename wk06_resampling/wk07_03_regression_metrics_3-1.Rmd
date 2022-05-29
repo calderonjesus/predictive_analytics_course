@@ -1,0 +1,343 @@
+---
+title: "Tuning Hyperparameters with tidymodels"
+subtitle: "Part 2 - Building a Repeatable Process"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Advertising Data
+
+As before, in this module, we revisit the [Advertising](https://www.statlearning.com/resources-first-edition) data set. 
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(knitr)
+
+ad_dt <- read_csv('./data/Advertising.csv') %>%
+  select(-...1)
+
+ad_dt %>%
+  ggpairs()
+```
+
+## Metrics
+
+We  define the performance metrics that we are interested in extracting via `metric_set()`. We will optimize by MAPE, but we would like to get information on the other metrics.
+
+```{r}
+perf_mx <- metric_set(mape, rmse, rsq) 
+```
+
+## Data Split and Folds
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split, as well as 5-fold cross-validation.
+
+```{r}
+set.seed(123)
+ad_split <- initial_split(ad_dt, prop = 0.7)
+ad_train <- training(ad_split)
+ad_test <- testing(ad_split)
+set.seed(456)
+ad_folds <- ad_train %>% 
+  vfold_cv(v=5, strata=sales)
+```
+
+
+# Recipes
+
+In this section, we will define a recipe that will establish:
+
++ The model's formula in R (using `~`).
++ Data pre-processing steps, if required (e.g., `step_ns()`).
+
+In this case, we will use a simple recipe. Notice that we removed `X1` at the loading step. We will use `sales ~ .` to mean that we want to predict `sales` based on all other variables in the tibble. 
+
+```{r}
+ad_rec1 <- 
+  recipe(sales ~ TV + radio, data = ad_train)
+
+ad_rec2 <-
+  ad_rec1 %>%
+  step_normalize(-sales) %>%
+  step_ns(TV, deg_free = tune('tv_df')) %>%
+  step_ns(radio, deg_free = tune('radio_df'))
+```
+
+# Models
+
+Now, let's create our candidate models. We will use two types of models: non-parametric (kNN) and parametric (linear regression). Each type of model will be tuned using 5-fold cross validation.
+
+The k-NN models are given by:
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+```
+
+The linear regression models are given by:
+
+```{r}
+lr_mod <- 
+  linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('glmnet')
+```
+
+
+# Worfklow Tuning and Assessment
+
+## Workflow knn1
+
+```{r}
+wf_knn1 <- 
+  workflow() %>% 
+  add_recipe(ad_rec1) %>% 
+  add_model(knn_mod)
+
+wf_knn1 %>% parameters()
+```
+
+### Parameter Grid knn1
+
+```{r}
+param_knn1 <- crossing(
+  neighbors = seq(4, 10, 1)
+)
+```
+
+### Tune Grid knn1
+
+```{r}
+tune_knn1 <-
+  wf_knn1 %>%
+  tune_grid(
+    ad_folds, 
+    grid = param_knn1,
+    metrics=perf_mx
+  )
+
+```
+
+### Top Performance
+
+```{r}
+show_best(tune_knn1, metric = 'mape') %>%
+  kable(digits = 3)
+```
+
+```{r}
+autoplot(tune_knn1) +
+  theme_minimal() +
+  labs(title = 'Sales Predictions by Revenue Spending',
+       subtitle = 'k-NN Model Tuning', 
+       x = 'Nieghbors (k)')
+```
+
+
+## Workflow knn2
+
+```{r}
+wf_knn2 <- 
+  workflow() %>% 
+  add_recipe(ad_rec2) %>% 
+  add_model(knn_mod)
+
+wf_knn2 %>% parameters()
+```
+
+### Parameter Grid knn1
+
+```{r}
+param_knn2 <- crossing(
+  neighbors = seq(4, 10, 1), 
+  tv_df = seq(1, 5, 1),
+  radio_df = seq(1, 5, 1)
+)
+```
+
+### Tune Grid knn2
+
+```{r}
+tune_knn2 <-
+  wf_knn2 %>%
+  tune_grid(
+    ad_folds, 
+    grid = param_knn2,
+    metrics=perf_mx
+  )
+```
+
+### Optimal Params
+
+```{r}
+show_best(tune_knn2, metric = 'mape') %>%
+  kable(digits = 3)
+```
+
+```{r}
+autoplot(tune_knn2) +
+  theme_minimal() +
+  labs(title = 'Sales Predictions by Revenue Spending',
+       subtitle = 'k-NN Model Tuning', 
+       x = 'Nieghbors (k)')
+```
+
+## Workflow lr1
+
+```{r}
+wf_lr1 <- 
+  workflow() %>% 
+  add_recipe(ad_rec1) %>% 
+  add_model(lr_mod)
+
+wf_lr1 %>% parameters()
+```
+
+### Parameter Grid lr1
+
+```{r}
+param_lr1 <- crossing(
+  penalty = seq(0.0, 0.5, 0.1),
+  mixture = seq(0.0, 1.0, 0.25)
+)
+```
+
+### Tune Grid lr1
+
+```{r}
+tune_lr1 <-
+  wf_lr1 %>%
+  tune_grid(
+    ad_folds, 
+    grid = param_lr1,
+    metrics=perf_mx
+  )
+
+```
+
+### Optimal Params
+
+```{r}
+show_best(tune_lr1, metric = 'mape') %>%
+  kable(digits = 3)
+```
+```{r}
+autoplot(tune_lr1) +
+  theme_minimal() +
+  labs(title = 'Sales Predictions by Revenue Spending',
+       subtitle = 'Linear Regression Model Tuning')
+```
+
+## Workflow lr2
+
+```{r}
+wf_lr2 <- 
+  workflow() %>% 
+  add_recipe(ad_rec2) %>% 
+  add_model(lr_mod)
+
+wf_lr2 %>% parameters()
+```
+
+### Parameter Grid lr2
+
+```{r}
+param_lr2 <- crossing(
+  penalty = seq(0.0, 0.5, 0.1),
+  mixture = seq(0.0, 1.0, 0.25),
+  tv_df = seq(1, 4, 1),
+  radio_df = seq(1, 4, 1)
+)
+```
+
+### Tune Grid lr2
+
+```{r}
+tune_lr2 <-
+  wf_lr2 %>%
+  tune_grid(
+    ad_folds, 
+    grid = param_lr2,
+    metrics=perf_mx
+  )
+
+```
+
+### Top Params
+
+```{r}
+show_best(tune_lr2, metric = 'mape') %>%
+  kable(digits = 3)
+```
+
+```{r}
+autoplot(tune_lr2) +
+  theme_minimal() +
+  labs(title = 'Sales Predictions by Revenue Spending',
+       subtitle = 'Linear Regression Model Tuning') +
+  theme(legend.position = 'bottom')
+```
+
+
+# Conclusion
+
+We have found the best choices for parametric and non-parametric models via model selection and assessment. As a final step, we will verify the performance of the top models:
+
+
+## Finalize and Test k-NN
+
+This is a k-NN model. It is a non-parametric estimate that is very flexible. It is a somewhat accurate model, but it is not very explainable.
+
+
+```{r}
+knn2_params <- select_best(tune_knn2, metric = 'mape')
+
+wf_knn_final <- 
+  wf_knn2 %>%
+  finalize_workflow(knn2_params)
+
+knn_fit <- 
+  wf_knn_final %>%
+  fit(ad_train)
+
+
+perf_mx(ad_test %>% bind_cols(predict(knn_fit, ad_test)), 
+        truth=sales, estimate=.pred) %>%
+  kable(digits = 3)
+```
+
+
+## Finalize and Test Linear Regression
+
+A more explainable, but less accurate model. It still may perform good enough, particularly for samples that are novel and different from the training set.
+
+```{r}
+lr2_params <- select_best(tune_lr2, metric = 'mape')
+
+wf_lr_final <- 
+  wf_lr2 %>%
+  finalize_workflow(lr2_params)
+
+lr_fit <- 
+  wf_lr_final %>%
+  fit(ad_train)
+
+
+perf_mx(ad_test %>% bind_cols(predict(lr_fit, ad_test)), 
+        truth=sales, estimate=.pred) %>%
+  kable(digits = 3)
+```
+

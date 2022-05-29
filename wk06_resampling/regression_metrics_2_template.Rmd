@@ -1,0 +1,234 @@
+---
+title: "Tuning Hyperparameters with tidymodels"
+subtitle: 'Part 1 - First Automation'
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Advertising Data
+
+As before, in this module, we revisit the [Advertising](https://www.statlearning.com/resources-first-edition) data set. 
+
+
+```{r}
+
+```
+
+
+# k-Nearest Neighbors Model
+
+Assume we would like to perform *model selection*. In this case, we are interested in determining an optimal *k* for a k-NN model. We want to choose among different options: 3, 6, 12, and 24 neighbours.
+
+## Data Split and Recipe
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split:
+
+```{r}
+
+```
+
+## Recipe: data preparation
+
+In this section, we will define a recipe that will establish:
+
++ The model's formula in R (using `~`).
++ Data preprocessing steps, if required (e.g., `step_dummy()` or `step_corr()`).
+
+In this case, we will use a simple recipe. Notice that we removed `X1` at the loading step. We will use `sales ~ .` to mean that we want to predict `sales` based on all other variables in the tibble. For simplicity, we will not use any other preprocessing step.
+
+```{r}
+
+```
+
+## Models
+
+Now, let's create our candidate models. All of them will be k-NN with regression mode as well as `kknn` engine. We will create the models in one part: a common base with a call to function `tune()` wherever we want to tune a parameter.
+
+```{r}
+
+```
+
+
+## Workflow
+
+We put together recipe and models through workflows:
+
+```{r}
+
+```
+
+## Create a Parameter Grid
+
+In this case, we will use a cross-product grid: all the elements from each parameter set will be used. In this case, our grid is simple:
+
+```{r}
+
+```
+
+
+## Create Folds for k-Fold Cross-Validation
+
+Now, we define our folds for k-fold CV. We use the command `vfold_cv()` to create the folds. We pass two parameters to this function: `v` determines the number of folds, and `strata` indicates the stratification variable (in this case, `sales`).
+
+```{r}
+
+```
+
+## Define Metrics Set
+
+In this case, we are interested in minimizing prediction error. We want to examine RMSE and MAPE. We can define an ad-hoc set of performance measures.
+
+```{r}
+
+```
+
+## Perform CV
+
+We perform cross-validation by calling the `tune_grid()` command. This command is similar to `fit_repeats()`.  The function `tune_grid()` expects a resampling definition such as the one we created above (`ad_folds`) and a parameter grid or specification. One example is `param_grid`, where we specified the exact values over which to perform optimization. 
+
+```{r}
+ 
+```
+
+## Collect Metrics
+
+Now, we will collect the metrics from the CV runs. We can use the function `collect_metrics()` for this purpose.
+
+```{r}
+
+```
+
+## Plot Results
+
+```{r}
+
+```
+
+
+This approach is more promissing. For instance, we may want to explore closer to k=6. We can simply change the param_grid and rerun our experiment:
+
+```{r}
+
+```
+
+## Selecting the Top-Performing k-NN Model
+
+The best-performing model by RMSE is:
+
+```{r}
+
+```
+The best-performing model by MAPE is:
+
+```{r}
+
+```
+
+# Linear Regression and Feature Engineering
+
+Now, let's try a couple of other approaches:
+
++ Normalize predictors.
++ Train a linear regression model.
++ Tune the linear regression.
+
+## Create Workflow
+
+### Recipe
+
+Start with a recipe in which we now normalize all the predictors. 
+
+```{r}
+
+```
+
+### Model
+
+In this case, we will use two regularization parameters:
+
++ Penalty: the amount of regularization to be applied. A higher value will penalize models with more variables.
++ Mixture: the type of regularization to be applied. A value of 0 is ridge regression, while a value of 1 is lasso regression.
+
+You may need to `install.packages('glmnet')` first to run the following lines.
+
+```{r}
+
+```
+
+### Workflow
+
+Create a workflow.
+
+```{r}
+
+```
+
+
+### Folds and Grid
+
+We already have a set of folds that we can use: `ad_folds`.
+
+With the function `parameters()` we can obtain the parameters that we can set in the grid:
+
+```{r}
+
+```
+
+We create a simple equally-spaced grid as a starting point:
+
+```{r}
+
+
+```
+
+
+
+## Perform CV and Examine Results
+
+We can "tune" this grid by performing CV to produce the performance metrics and assess the model's performance.
+
+```{r}
+
+```
+
+
+```{r}
+ 
+```
+
+We can focus on a region of parameters where penalty is in the vicinity of 0.25 and mixture is close to 1.
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+## Selecting the Best-Performing Linear Regression 
+
+The best performing models by RMSE are:
+
+```{r}
+
+```
+
+Sorted by MAPE.
+
+```{r}
+
+```
+
+# Conclusion
+
+So far, performance appears to be better using k-NN than on linear regression. We will benefit from experimenting and investigating further. 

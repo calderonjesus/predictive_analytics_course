@@ -1,0 +1,351 @@
+---
+title: "Tuning Hyperparameters with tidymodels"
+subtitle: 'Part 1 - First Automation'
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Advertising Data
+
+As before, in this module, we revisit the [Advertising](https://www.statlearning.com/resources-first-edition) data set. 
+
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+
+ad_dt <- read_csv('./data/Advertising.csv') %>%
+  select(-X1)
+
+ad_dt %>%
+  ggpairs()
+```
+
+
+# k-Nearest Neighbors Model
+
+Assume we would like to perform *model selection*. In this case, we are interested in determining an optimal *k* for a k-NN model. We want to choose among different options: 3, 6, 12, and 24 neighbours.
+
+## Data Split and Recipe
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split:
+
+```{r}
+set.seed(123)
+ad_split <- initial_split(ad_dt, prop = 0.7)
+ad_train <- training(ad_split)
+ad_test <- testing(ad_split)
+```
+
+## Recipe: data preparation
+
+In this section, we will define a recipe that will establish:
+
++ The model's formula in R (using `~`).
++ Data preprocessing steps, if required (e.g., `step_dummy()` or `step_corr()`).
+
+In this case, we will use a simple recipe. Notice that we removed `X1` at the loading step. We will use `sales ~ .` to mean that we want to predict `sales` based on all other variables in the tibble. For simplicity, we will not use any other preprocessing step.
+
+```{r}
+ad_rec <- 
+  recipe(sales ~ ., data = ad_train)
+```
+
+## Models
+
+Now, let's create our candidate models. All of them will be k-NN with regression mode as well as `kknn` engine. We will create the models in one part: a common base with a call to function `tune()` wherever we want to tune a parameter.
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+```
+
+
+## Workflow
+
+We put together recipe and models through workflows:
+
+```{r}
+wf_knn <- workflow() %>% add_recipe(ad_rec) %>% add_model(knn_mod) 
+```
+
+## Create a Parameter Grid
+
+In this case, we will use a cross-product grid: all the elements from each parameter set will be used. In this case, our grid is simple:
+
+```{r}
+param_grid <- crossing(
+  neighbors = c(3, 6, 12, 24)
+)
+```
+
+
+## Create Folds for k-Fold Cross-Validation
+
+Now, we define our folds for k-fold CV. We use the command `vfold_cv()` to create the folds. We pass two parameters to this function: `v` determines the number of folds, and `strata` indicates the stratification variable (in this case, `sales`).
+
+```{r}
+set.seed(456)
+ad_folds <- ad_train %>%
+  vfold_cv(v=5, strata=sales)
+```
+
+## Define Metrics Set
+
+In this case, we are interested in minimizing prediction error. We want to examine RMSE and MAPE. We can define an ad-hoc set of performance measures.
+
+```{r}
+perf_meas <- metric_set(rmse, mape, rsq)
+```
+
+## Perform CV
+
+We perform cross-validation by calling the `tune_grid()` command. This command is similar to `fit_repeats()`.  The function `tune_grid()` expects a resampling definition such as the one we created above (`ad_folds`) and a parameter grid or specification. One example is `param_grid`, where we specified the exact values over which to perform optimization. 
+
+```{r}
+ad_tuned <- 
+  wf_knn %>%
+  tune_grid(
+    ad_folds,
+    grid = param_grid, 
+    metrics = perf_meas
+  ) 
+```
+
+## Collect Metrics
+
+Now, we will collect the metrics from the CV runs. We can use the function `collect_metrics()` for this purpose.
+
+```{r}
+ad_perf <- ad_tuned %>% collect_metrics()
+```
+
+## Plot Results
+
+```{r}
+ad_perf %>%
+  ggplot(aes(x=neighbors, y=mean)) +
+  geom_point() +
+  geom_line() + 
+  facet_wrap(~.metric, scales ='free_y') + 
+  theme_minimal() +
+  labs(title = 'Performance Metrics',
+       subtitle = 'Sales Prediction from Ad Spending')
+  
+```
+
+
+This approach is more promissing. For instance, we may want to explore closer to k=6. We can simply change the param_grid and rerun our experiment:
+
+```{r}
+param_grid2 <- crossing(
+  neighbors = c(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 24)
+)
+
+ad_tuned2 <- 
+  wf_knn %>%
+  tune_grid(
+    ad_folds,
+    grid = param_grid2, 
+    metrics = perf_meas
+  )
+
+ad_perf2 <- ad_tuned2 %>% collect_metrics()
+
+ad_perf2 %>%
+  ggplot(aes(x=neighbors, y=mean)) +
+  geom_point() +
+  geom_line() + 
+  facet_wrap(~.metric, scales ='free_y') + 
+  theme_minimal() +
+  labs(title = 'Performance Metrics',
+       subtitle = 'Sales Prediction from Ad Spending')
+```
+
+## Selecting the Top-Performing k-NN Model
+
+The best-performing model by RMSE is:
+
+```{r}
+show_best(ad_tuned2, metric='rmse')
+```
+The best-performing model by MAPE is:
+
+```{r}
+show_best(ad_tuned2, metric='mape')
+```
+
+# Linear Regression and Feature Engineering
+
+Now, let's try a couple of other approaches:
+
++ Normalize predictors.
++ Train a linear regression model.
++ Tune the linear regression.
+
+## Create Workflow
+
+### Recipe
+
+Start with a recipe in which we now normalize all the predictors. 
+
+```{r}
+ad_rec1 <- 
+  recipe(sales ~ ., data = ad_train) %>%
+  step_normalize(-sales) # why?
+```
+
+### Model
+
+In this case, we will use two regularization parameters:
+
++ Penalty: the amount of regularization to be applied. A higher value will penalize models with more variables.
++ Mixture: the type of regularization to be applied. A value of 0 is ridge regression, while a value of 1 is lasso regression.
+
+You may need to `install.packages('glmnet')` first to run the following lines.
+
+```{r}
+lr_mod <- 
+  linear_reg(penalty = tune(), 
+             mixture = tune()) %>%
+  set_engine('glmnet')
+```
+
+### Workflow
+
+Create a workflow.
+
+```{r}
+wf_lr <- 
+  workflow() %>%
+  add_recipe(ad_rec1) %>%
+  add_model(lr_mod)
+```
+
+
+### Folds and Grid
+
+We already have a set of folds that we can use: `ad_folds`.
+
+With the function `parameters()` we can obtain the parameters that we can set in the grid:
+
+```{r}
+wf_lr %>% parameters()
+```
+
+We create a simple equally-spaced grid as a starting point:
+
+```{r}
+
+lr_grid <- crossing(
+  penalty = c(0, 0.25, 0.5, 0.75, 1.0), 
+  mixture = c(0, 0.25, 0.5, 0.75, 1.0)
+)
+
+```
+
+
+
+## Perform CV and Examine Results
+
+We can "tune" this grid by performing CV to produce the performance metrics and assess the model's performance.
+
+```{r}
+ad_lr_tuned <- 
+  wf_lr %>%
+  tune_grid(
+    ad_folds, 
+    grid = lr_grid,
+    metrics = perf_meas
+  )
+
+ad_lr_perf <- ad_lr_tuned %>% collect_metrics()
+```
+
+
+```{r}
+ad_lr_perf %>%
+  ggplot(aes(x = penalty, y = mean, colour = as_factor(mixture))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric, scales = 'free_y') +
+  labs(title = 'Linear Regression Model',
+       subtitle = 'Parameter Tuning', 
+       x = 'Penalty', 
+       y = 'Mean') +
+  guides(color = guide_legend(title = 'Mixture (0-ridge 1-lasso)')) +
+  scale_colour_brewer(type = "qual", palette = 1) +
+  theme_minimal() +
+  theme(legend.position = 'bottom',
+        legend.title = element_text(size=10),
+        axis.title = element_text(size=8),
+        axis.text = element_text(size = 6)) 
+```
+
+We can focus on a region of parameters where penalty is in the vicinity of 0.25 and mixture is close to 1.
+
+```{r}
+lr_grid2 <- crossing(
+  penalty = seq(0.15, 0.50, 0.05),
+  mixture = seq(0.5, 1.0, 0.1)
+)
+
+ad_lr_tuned2 <- 
+  wf_lr %>%
+  tune_grid(
+    ad_folds, 
+    grid = lr_grid2,
+    metrics = perf_meas
+  )
+
+ad_lr_perf2 <- ad_lr_tuned2 %>% collect_metrics()
+```
+
+
+```{r}
+ad_lr_perf2 %>%
+  ggplot(aes(x = penalty, y = mean, colour = as_factor(mixture))) + 
+  geom_point() + 
+  geom_line() + 
+  facet_wrap(~.metric, scales = 'free_y') +
+  labs(title = 'Linear Regression Model',
+       subtitle = 'Parameter Tuning', 
+       x = 'Penalty', 
+       y = 'Mean') +
+  guides(color = guide_legend(title = 'Mixture (0-ridge 1-lasso)')) +
+  scale_colour_brewer(type = "qual", palette = 1) +
+  theme_minimal() +
+  theme(legend.position = 'bottom',
+        legend.title = element_text(size=10),
+        axis.title = element_text(size=8),
+        axis.text = element_text(size = 6)) 
+```
+
+## Selecting the Best-Performing Linear Regression 
+
+The best performing models by RMSE are:
+
+```{r}
+show_best(ad_lr_tuned2, metric='rmse') 
+```
+
+Sorted by MAPE.
+
+```{r}
+show_best(ad_lr_tuned2, metric='mape')
+```
+
+# Conclusion
+
+So far, performance appears to be better using k-NN than on linear regression. We will benefit from experimenting and investigating further. 
