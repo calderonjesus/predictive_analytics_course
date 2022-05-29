@@ -1,0 +1,525 @@
+---
+title: "Predicting Wine Quality"
+subtitle: "Mid-Term Project"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: False
+    toc_float: True
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+# Mid-Term Introduction
+
+In this project, we will examine an application of Machine Learning (ML) to the futures markets, more specifically, the wine futures market. In financial derivative called **futures contract** is "a legal agreement to buy or sell a particular commodity asset, or a security at a predetermined price at a specified time in the future" ([investopedia.com](https://www.investopedia.com/terms/f/futurescontract.asp)). Wine is a commodity with an active and liquid (pun intended) derivatives markets in futures. Wine Spectator, a specialized publication, states that a wine futures contract is:
+
+>  "A wine sold to consumers several months, sometimes years, before its release. The initial futures offering is touted as a lower price than will be offered when the wine officially hits the market. The practice is most commonly associated with Bordeaux's annual en primeur campaign." ([winespectator.com](https://www.winespectator.com/glossary/show/id/futures))
+
+Wine futures are part of an investment category called [Alternative Assets (investopedia.com)](https://www.investopedia.com/terms/a/alternativeassets.asp). As an investment, we benefit from predicting the rating that a wine will receive, with a view of identifying those wines that will result in a high rating. Of course, in this case wine rating is a proxy for wine quality (a subjective category). The relationship between wine rating and wine price is not linear: a few, highly-rated wines can reach very high prices (see, for example, [this analysis at vivino.com](https://www.vivino.com/wine-news/how-much-does-a-good-bottle-of-wine-cost)).
+
+In ["Quants and quaffs: AI and the fine-wine market", The Economist (2015)](https://www.economist.com/science-and-technology/2015/08/08/quants-and-quaffs) offers the following perspective:
+
+> "The term “alternative assets” encompasses all manner of offbeat investments. Philatelists delight in rare stamps; petrol-heads in classic cars; oenophiles in that most liquid of assets, fine wine. The wine futures market, though, is pretty inefficient. Prices hinge on tastings of stuff that is still in the barrel, long before it reaches its fullest bloom.
+>
+> [...] Previous attempts to tame the fickle wine market with mathematics have relied on linear regression models. These take the untidy spray of data points about a given vintage—the particulars of the weather that year, the vineyard’s history of medallion-winning and so on—and use them to draw the straight line that has, over the course of time, most closely approximated the price. Pick the point on this line where a particular vintage lies, and out comes a price prediction.
+>
+> Such efforts have produced mixed results, however, and Dr Fletcher thought he could do better. Instead of regression, he applied a form of artificial intelligence, well known among prognosticators of other asset classes, called machine learning. This is able to ferret out correlations (perhaps a great many of them, some weak or transient) that standard regression models gloss over. Rather than a simple straight line, the result is a price curve that snakes through the data, thus yielding, if the particulars of the calculation have been set up properly, stronger predictions than regressions can manage."
+
+
+## Problem definition 
+
+The objective is to predict wine rating, the main determinant of wine price, based on a set of measurable properties (as opposed to a somelier's opinion). 
+
+The data sets can be downloaded from the [University of California at Irvine Machine Learning Data Repository](https://archive.ics.uci.edu/ml/datasets/Wine+Quality). Download data sets for red and white wine. These the data sets were originally published in: 
+
+P. Cortez, A. Cerdeira, F. Almeida, T. Matos and J. Reis. Modeling wine preferences by data mining from physicochemical properties.
+In Decision Support Systems, Elsevier, 47(4):547-553, 2009 ([a pre-print version is vailable here](http://repositorium.sdum.uminho.pt/bitstream/1822/10029/1/wine5.pdf)). 
+
+
+The data sets for red and white wines include the following variables:
+
++ Fixed acidity
++ Volatile acidity
++ Citric acid
++ Residual sugar
++ Chlorides
++ Free sulfur dioxide
++ Density
++ pH
++ Sulfates
++ Alcohol
+
+The output variable is a quality score between 0 and 10.
+
+## Instructions
+
+Please submit a report of the results of your model experiments and the decisions that you made to construct and recommend final model. 
+
+**All of your work will be based on the white wine data set. The examples below use the red wine data set.**
+
+
+You can follow your preferred document structure, but your report should include:
+
++ An introduction that describes the problem, the objectives, and your proposed model with an indication if this is good enough to use or more investigation is warranted.
++ A document body with one or more parts where you discuss:
+
+  * Exploratory data analysis
+  * Cross-validation and testing sets
+  * Recipes, models, and workflows
+  * Cross-validation results and model assessment
+
++ Conclusion discuss your model selection and results of model testing.
+
+### Formatting
+
+  
+  + Show your code and warnings, but feel free to silence messages. You can do this by setting the `setup` chunk to: `knitr::opts_chunk$set(echo = TRUE, warning = TRUE, message = FALSE)` 
+  + Please, format your code: readability is essential.
+  + In the measure possible, try to structure your report as a document meant to be read from beginning to end. Explain the steps of your process and the success or failure of the experiment. 
+  + The report does not need to be narrative, but it must be clear. Mainly, be explicit about your modelling choices.
+  + You can write free-form text, use bullet points, or a combination of free-form and bullet points.
+  + Please add a floating table of contents to your report.
+  + Feel free to use any markdown theme from the standard set.
+
+### Structure of the Report
+  
+  + The report must address the requirements presented in the remaining sections. 
+  + Feel free to add subsections within the top-level sections.
+  + Please, do not include these instructions from the submission.
+  + Submit both, Rmd and HTML files.
+  
+  
+# Introduction
+
++ Describe the problem and the data set.
++ Give a preview of your conclusions and main recommendations.
++ Introduce the rest of your report.
+
+# Analysis
+
+## Exploratory Data Analysis
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(knitr)
+theme_set(theme_minimal())
+```
+
++ Load the data sets for white wine.
++ The data sets are in a semi-colon-delimited text file. To load them, you can use the function `read_delim([filepath], delim=';')`. For instance, use:
+
+```{r}
+wine_dt <- read_delim('./data/winequality-white.csv', delim = ';')
+```
+
+
+```{r, echo = TRUE}
+#wine_dt <- read_delim('./data/winequality-red.csv', delim = ';')
+```
+
++ For the wine data set, summarise each variable. Include the min, max, the three quartiles (25th percentile, median, and 75th percentile), mean, standard deviation, and IQR in a table. To create the summary, apply the steps below concatenating them with `%>%`:
+
+  * Start with the data set.
+  * Add an identifier column to each data set using `rownames_to_column('id')`.
+  * Apply `pivot_long(-id)` to create a long version of the data set.
+  * Group by the name of each of the wines' properties (e.g., 'alcohol', 'chloride', 'citric acid', etc.)
+  + Summarise with the desired metrics.
+  
++ Create a pair plot matrix for each of the (original) data sets (`ggpairs()`). *Tip*: to make your chart display on a larger surface, try setting `fig.width` and `fig.height` in the code chunk header (the width/height units are inches). After the triple back-quotes write: `{r, fig.width=12, fig.height=8}`.
++ Comment on significant relationships and 
+  
+
+```{r}
+wine_stats <- wine_dt %>%
+  rownames_to_column('id') %>%
+  pivot_longer(-id, names_to='property') %>%
+  group_by(property) %>%
+  summarise(count = n(), 
+            min = min(value), 
+            q25 = quantile(value, 0.25),
+            med = median(value),
+            avg = mean(value),
+            q75 = quantile(value, 0.75),
+            max = max(value),
+            iqr = IQR(value),
+            sd = sd(value),
+            NAs = sum(is.na(value)))
+```
+
+
+For instance, the profile of the red wine data (`wine_stats`) is in the table below.
+
+```{r, echo=TRUE, eval=TRUE}
+wine_stats %>%
+  kable(digits = 3)
+```
+
+As well, you can use this code to easily produce a readable pairs plot matrix that also shows fitted smooth model called [LOESS](https://en.wikipedia.org/wiki/Local_regression). The fit function which is a smoothing method that can help us identify (visually) trends and relationships in our data.
+
+```{r, echo = TRUE, eval=TRUE, fig.width = 12, fig.height=8 }
+ggpairs(wine_dt, 
+        lower =  list(continuous = wrap("smooth_loess",
+                                        color='skyblue'), 
+                      combo = "facethist", 
+                      discrete = "facetbar", 
+                      na = "na"),
+        upper = list(continuous = wrap("cor", size=4), 
+                      combo = "facethist", 
+                      discrete = "facetbar", 
+                      na = "na")) +
+  theme_minimal() + 
+  labs(title = 'Exploratory Data Analysis',
+       subtitle = 'Red Wine Data')
+
+```
+
+## Performance Metrics
+
++ Consult [Cortez et al (2009)](http://repositorium.sdum.uminho.pt/bitstream/1822/10029/1/wine5.pdf). The authors propose a performance metrics, identify the metric in [yardstick's documentation](https://yardstick.tidymodels.org/articles/metric-types.html#metrics-1), and include it in the metric set below.
++ Create a metric set with the metric selected in the step above, as well as RMSE and R-squared.
++ Between both error measures, select one which you believe will render the best results. Justify your choice. *Tip*: You may want to consider [this reference](http://www.eumetrain.org/data/4/451/english/msg/ver_cont_var/uos3/uos3_ko1.htm).
+
+```{r}
+perf_mx <- metric_set(mae, rmse, rsq)
+```
+
+## Define Training and Testing Set, CV Folds
+
+For each data set repeat the steps below:
+
++ Use a random seed of 123: `set.seed(123)`.
++ Partition data set in 70/30 training/testing splits, stratified by 'quality'.
++ Use a random seed of 456: `set.seed(456)`.
++ Set a 5-fold cross validation with 5 repetitions and stratified by 'quality'.
+
+```{r}
+set.seed(123)
+wine_split <- initial_split(wine_dt, strata = 'quality')
+wine_train <- training(wine_split)
+wine_test <- testing(wine_split)
+set.seed(456)
+wine_folds <- 
+  wine_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = 'quality')
+```
+
+
+## Feature Engineering
+
++ In this section define the concept of feature engineering. 
++ Explain what standardization and basis expansion transformation are. You can find both of these terms discussed in Khun and Johnson (2019), Feature Engineering and Selection, [Section 6.1 1:1 Transformations](http://www.feat.engineering/numeric-one-to-one.html) and [Section 6.2 1:Many Transformations](http://www.feat.engineering/numeric-one-to-many.html), respectively.
++ Create three recipes, remembering to describe them in your text:
+
+  - Recipe 1: `wine_base_rec`
+  
+    * Add a formula where the response variable quality is explained by all other variables (all the predictors).
+    
+  - Recipe 2: `wine_std_rec`
+  
+    * Add a formula where the response variable quality is explained by all other variables (all the predictors).
+    * Add a step to standardize all predictors (`step_normalize()`).
+    * Should we standardize the response variable `quality`? Why? If applicable, also explain how you would normalize the variable and perform the step on your data.
+    
+  - Recipe 3: `wine_eng_rec`
+  
+    * Same as recipe 1, `wine_base_rec`.
+    * Add a step to standardize all predictors.
+    * Add a step to basis expansion transformation (`step_bs`). 
+    
+    
+```{r}
+wine_base_rec <-
+  recipe(quality ~ ., data = wine_train)
+
+wine_std_rec <-
+  recipe(quality ~ ., data = wine_train) %>%
+  step_normalize(all_predictors())
+
+wine_bs_rec <- 
+  recipe(quality ~ ., data = wine_train) %>%
+  step_normalize(all_predictors()) %>%
+  step_bs(all_predictors()) 
+```
+
+
+## Models and Hyper-parameter Tuning
+
+*Tip*. You will perform many computations and I believe that most details of the parallel computation will not get in the way in the exercise below. Therefore, I recommend that you try the following code to register a parallel back-end just after you load all libraries and data. You may need to run `install.packages('doParallel')`. Remember to add a code chunk at the end of your document to stop the parallel cluster: `stopCluster(cl)`.
+
+```{r, echo = TRUE, eval = TRUE}
+library(doParallel)
+
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+You can add the parallel process registration at the beginning of your document and stop the cluster at the end. Another approach may be to start the cluster immediately before hyperparameter tuning and stopping it right after. 
+
+### k-NN 
+
+
++ Introduce the k-NN model by briefly explaining what it is, including details such as parametric/non-parametric, advantages and disadvantages.
++ Create a knn model. Set the engine as usual and the mode to regression. Indicate that you will tune the `neighbors` parameter.
++ Create a parameter grid with 5, 10, 15, 20, ..., 250 neighbors (`seq(5, 250, 5)`).
++ Create workflows to tune your model, one workflow per recipe-model combination.
++ Tune the workflows. 
++ Collect the performance results. 
++ Plot the performance metrics and the hyperparameters. Feel free to use `autoplot()` or construct your plot using ggplot.
++ Show the best performing 
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+
+knn_grid <- crossing(
+  neighbors = seq(5, 250, 5)
+)
+
+wf_base_knn <- 
+  workflow() %>%  add_recipe(wine_base_rec) %>% add_model(knn_mod)
+
+wf_std_knn <-
+  workflow() %>% add_recipe(wine_std_rec) %>% add_model(knn_mod)
+
+wf_bs_knn <-
+  workflow() %>% add_recipe(wine_bs_rec) %>%add_model(knn_mod)
+
+ctrl_tuning <- control_grid(save_pred = TRUE)
+```
+
+```{r}
+knn_base_res <- 
+  wf_base_knn %>%
+  tune_grid(
+    wine_folds, 
+    grid = knn_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+
+knn_std_res <- 
+  wf_std_knn %>%
+  tune_grid(
+    wine_folds, 
+    grid = knn_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+
+knn_bs_res <- 
+  wf_bs_knn %>%
+  tune_grid(
+    wine_folds, 
+    grid = knn_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+
+```
+
+```{r, echo= TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+
+```{r, echo = TRUE}
+knn_res_list <- list(base = knn_base_res %>% collect_metrics(), 
+                     std = knn_std_res %>% collect_metrics(),
+                     basis = knn_bs_res %>% collect_metrics())
+knn_res <- bind_rows(knn_res_list, .id = 'recipe')
+```
+
+```{r}
+knn_res %>%
+  ggplot(aes(x = neighbors, y = mean, colour = recipe)) +
+  geom_line() + 
+  facet_wrap(~.metric, scales = 'free', nrow = 2) +
+    labs(title = 'k-NN Models with Raw Data', 
+       subtitle = 'Performance Metrics',
+       x = 'Nieghbours (k)') +
+  theme_minimal() +
+  scale_color_brewer(type = 'qual', palette = 2)
+```
+
+
+```{r}
+knn_best_list <- list(base = knn_base_res %>%
+                        show_best(metric='rmse'), 
+                     std = knn_std_res %>% 
+                       show_best(metric='rmse'),
+                     basis = knn_bs_res %>% 
+                       show_best(metric='rmse'))
+knn_best <- bind_rows(knn_best_list, .id = 'recipe')
+```
+
+```{r}
+knn_best %>%
+  kable(digits = 4)
+```
+
+
+
+## Linear Regression
+
++ Define a linear regression model. Set its engine to `glmnet` and the mode to `regression`. Indicate that you will tune the parameters `penalty` and `mixture`.
++ Create the three workflows by combining each of the three recipes and the linear regression model. 
++ Tune the hyperparameters `penalty` and `mixture` as follows:
+
+  * Define `penalty` and `mixture`. You can find this information in [parsnip's documentation](https://parsnip.tidymodels.org/reference/linear_reg.html).
+  * Create a parameter grid as the cross-product of:
+
+    - `penalty` values between 0 and 0.3, step by 0.05.
+    - `mixture` values given by `c(0, 0.15, 0.25, 0.75, 0.85, 1)`.
+  * Tune the workflows.
+  + For each workflow show the best models.
+  + Plot the error metrics and the hyperparameters. Feel free to use `autoplot()` and to exclude r-squared, if it makes the visualization clearer.
+  
+  
+```{r}
+lr_mod <-
+  linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine('glmnet') %>%
+  set_mode('regression')
+
+wf_base_lr <- workflow() %>% add_recipe(wine_base_rec) %>% add_model(lr_mod)
+wf_std_lr <- workflow() %>% add_recipe(wine_std_rec) %>% add_model(lr_mod)
+wf_bs_lr <- workflow() %>% add_recipe(wine_bs_rec) %>% add_model(lr_mod)
+
+lr_grid <- crossing(
+  penalty = seq(0, 0.3, 0.05),
+  mixture = c(0, 0.15, 0.25, 0.75, 0.85, 1)
+)
+```
+
+```{r}
+library(doParallel)
+
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r}
+lr_base_res <- 
+  wf_base_lr %>%
+  tune_grid(
+    wine_folds, 
+    grid = lr_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+lr_std_res <- 
+  wf_std_lr %>%
+  tune_grid(
+    wine_folds, 
+    grid = lr_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+
+lr_bs_res <- 
+  wf_bs_lr %>%
+  tune_grid(
+    wine_folds, 
+    grid = lr_grid,
+    control = ctrl_tuning,
+    metrics = perf_mx
+  )
+
+```
+
+```{r}
+stopCluster(cl)
+```
+
+```{r, echo = TRUE}
+lr_res_list <- list(base = lr_base_res %>% collect_metrics(), 
+                     std = lr_std_res %>% collect_metrics(),
+                     basis = lr_bs_res %>% collect_metrics())
+lr_res <- bind_rows(lr_res_list, .id = 'recipe')
+```
+
+```{r}
+lr_res %>%
+  filter(.metric != 'rsq') %>%
+  ggplot(aes(x = penalty, y = mean, 
+             colour = as_factor(mixture))) +
+  geom_line() + 
+  geom_point() +
+  facet_grid(.metric~recipe, scales = 'free') +
+    labs(title = 'Linear Regression Models', 
+       subtitle = 'Performance Metrics',
+       x = 'Penalty') +
+  guides(colour = guide_legend(title = 'Mixture')) +
+  theme_minimal() +
+  scale_color_brewer(type = 'qual', palette = 2)
+```
+
+
+```{r}
+lr_best_list <- list(base = lr_base_res %>%
+                        show_best(metric='rmse'), 
+                     std = lr_std_res %>% 
+                       show_best(metric='rmse'),
+                     basis = lr_bs_res %>% 
+                       show_best(metric='rmse'))
+lr_best <- bind_rows(lr_best_list, .id = 'recipe')
+```
+
+```{r}
+lr_best %>%
+  kable(digits = 4)
+```
+
+
+
+## Model Selection
+
++ Select the top-performing model across all the experiments with k-NN and linear regression.
++ Fit the best-performing model on the entire training set.
++ Evaluate the best model on the test set.
+
+```{r}
+best_lr <- select_best(lr_bs_res, metric = 'rmse')
+
+best_lr_fit  <- 
+  wf_bs_lr %>%
+  finalize_workflow(parameters = best_lr) %>%
+  fit(wine_train)
+
+perf_mx(wine_test %>% bind_cols(predict(best_lr_fit, wine_test)),
+        truth = quality, estimate = .pred)
+```
+
++ For this model, draw a diagram as the one below. What does the diagram show? Add labels and formatting to the diagram and mention it in your conclusions.
+
+```{r, echo = TRUE}
+lr_bs_res %>%
+  collect_predictions(parameters = best_lr) %>%
+  ggplot(aes(x = as_factor(quality), y = .pred)) +
+  geom_boxplot() + 
+  labs(title = 'Actual vs Predicted Values', 
+       subtitle = 'Distribution of Cross-Validation Predictions', 
+       x = 'Actual Quality', y = 'Predicted Quality')
+```
+
+
+# Conclusion
+
++ Which model would you recommend as top performing? Briefly describe the process by which you assessed each model's performance and selected the model with the right level of flexibility.
++ Discuss how your results could change if you chose a different error measure and comment on the intuitive nature of the chosen measure over the alternatives.
++ Discuss the effect of the transformations applied (recipes) on the performance of the k-NN and linear regression models that you tested.
++ For your recommended model, discuss if the model results are of uniform quality or if predictions tend to be better for certain quality ratings than others. Why do you suspect that this is the case? How can this be addressed?
++ How would you transform this problem to a classification setting? How could you create a response variable that would be of interest to the problem that we are trying to solve?
+
