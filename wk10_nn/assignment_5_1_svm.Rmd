@@ -1,0 +1,524 @@
+---
+title: 'Assignment 5: Predicting Stock Returns'
+subtitle: 'Support Vector Machine (1/3)'
+author: "Jesús Calderón"
+date: "02/12/2021"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+## Support Vector Machines
+
+```{r, warning = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(doParallel)
+library(tictoc)
+library(knitr)
+```
+
+```{r}
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today) %>%
+  mutate(Direction = fct_relevel(Direction, 'Up'))
+```
+
+> Guidance: this solution includes a releveling of Direction such that "Up" is the first level. This is particularly relevant in the context of the problem since this is the level of importance (we care about "Up" movements). It has an effect on measures such as ROC AUC.
+
++ Train your models with a 5-fold cross-validation and 5 repetitions. Set the stratification variable to Direction and decide if Year should be a predictor.
++ Random seeds:
+
+  - Please, use seed 123 for the training/testing partition.
+  - Please, use seed 456 for the cross validation partition.
+
+```{r}
+set.seed(123)
+dt_split <- initial_split(market_dt, 
+                              prop = 0.7, 
+                              strata = Direction)
+dt_train <- training(dt_split)
+dt_test <- testing(dt_split)
+
+set.seed(456)
+dt_folds <- dt_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = Direction)
+```
+
+
++ Recipes. For each model, try two recipes: 
+  
+  - For each model, consult the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html). Add recipe components as recommended by the text. You can call this the "base" recipe.
+  - In addition to the recipe above, add another recipe with the intention of enahncing performance. Feel free to try any pre-processing step available in [the recipes library](https://recipes.tidymodels.org/reference/index.html). You can call this an "enhanced" recipe.
+
+
+> Guidance: 
+>
+>+ Apply a zero variance filter, `step_zv()`.
+>+ Apply decorrelation, `step_corr()` to .
+>+ Apply normalization, `step_normalize()`.
+>+ Apply Yeo-Johnson transform, `ste_YeoJohnson()`. 
+>+ The data set does not have missing values, therefore it is not necessary to apply missing value imputation.
+>+ Do not transform the target variable.
+
+```{r}
+svm_base_rec <- 
+  recipe(Direction ~ ., data = dt_train) %>%
+  step_mutate(Year = as.character(Year)) %>%
+  update_role(Year, new_role = 'ID') %>%
+  step_zv(all_predictors(), -Direction) %>%
+  step_corr(all_predictors(), -Direction) %>%
+  step_normalize(all_predictors(), -Direction) %>%
+  step_YeoJohnson(all_predictors(), -Direction)
+
+svm_base_rec %>%
+  prep() %>%
+  bake(dt_train)
+```
+
+
+> Guidance: the idea for the second recipe is to motivate experimentation. The base recipe should be enhanced with at least one additional step which could be a basis spline, Yeo-Johnoson transformation, a function of log transformation (log1p, for instance), etc. Some transformations may not have effect for certain models (normalization, for instance), so we are expecting that the recipe does have effect on performance.  
+> In this case, the recipe constrains the predictors and applies a basis spline transformation, but it is certainly not the only way to proceed.
+
+```{r}
+svm_enh_rec <- 
+  recipe(Direction ~ Lag1 + Lag2, data = dt_train) %>%
+  step_zv(all_predictors(), -Direction) %>%
+  step_corr(all_predictors(),-Direction) %>%
+  step_normalize(all_predictors(),-Direction) %>%
+  step_YeoJohnson(all_predictors(),-Direction) %>%
+  step_bs(all_predictors(),-Direction)
+
+svm_enh_rec %>%
+  prep() %>%
+  bake(dt_train)
+```
+
+
++ Hyperparameters.
+
+   - Train the models by starting with the based on the values recommended by the library `dials` and adjusting or fine-tuning them to enhance your models' performance. 
+  - I do not expect you to show all of your experiments (but you are free to show as many as you want), but do explain your parameter choices and how you arrived to them.
+  - For the SVM model with RBF kernel: tune RBF sigma and margin. Feel free to use any search strategy that you deem appropriate.
+  - For the SVM model with polynomial kernel: tune the cost and margin svm parameters, as well as the degree of the polynomial and the scale factor. Feel free to use a Bayesian optimizer. 
+  - For each algorithm, please train at least 20 parameter combinations. You are free to chose the grid of your preference (regular, Latin Hypercube, Bayesian optimization, or a sequential combination of these methods).
+
+
+> Guidance: as a general observation, the kernel can be treated as a feature engineering step. Therefore, we must explore which kernel will perform better through experimentation.
+
+## SVM with Polynomial Kernel
+
+> Guidance: the hyperparameters `cost`, `margin`, `degree`, and `scale_factor` must be set to be tuned. Some submissions may use a different engine than kernlab. 
+
+```{r}
+svm_poly_mod <- 
+  svm_poly(cost = tune(),
+           margin = tune(),
+           degree = tune(),
+           scale_factor = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('kernlab')
+```
+
+```{r}
+svm_poly_base_wf <- 
+  workflow() %>%
+  add_recipe(svm_base_rec) %>%
+  add_model(svm_poly_mod)
+
+svm_poly_enh_wf <- 
+  workflow() %>%
+  add_recipe(svm_enh_rec) %>%
+  add_model(svm_poly_mod)
+
+```
+
+
++ Validation results are sufficient. At this point, we have not finished all the model assessments that we would like (SVMs and Neurual Nets will be coming in the next assignment), so we will wait a little longer before testing.
+
+
+> Guidance: the main performance metric to be optimized should come first in the metric set. 
+>
+>+ Kappa (`kap`) and f-measure (`f_meas`) make sense in this context. Kappa will give us accuracy adjusted to randomness and, in a sense, will give us a measure of "skill" of the algorithm. F-measure will give us a combination of precision and recall. If F-measure is chosen, Direction should have "Up" as the first level.
+>+ Precision or Recall could be chosen, but the student needs to be clear as to what is being optimized. This will come out in the summary report. 
+>+ Accuracy could be used, but it will not give a measure adjusted by randomness such as kappa. Accuracy is not a great choice. ROC AUC makes sense for imbalanced classes, but other metrics may be better choices in this case.
+
+
+```{r}
+perf_mx <- metric_set(f_meas, kap, precision, recall, accuracy)
+```
+
+### Optimizing Base Recipe
+
+> Guidance: the first run is based on standard model parameters. We adjust them further below.
+
+```{r}
+svm_poly_param1 <- svm_poly_base_wf %>%
+  parameters() 
+
+svm_poly_param1
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+bayes_ctrl <- control_bayes(no_improve = 10,
+                            save_pred = TRUE, 
+                            seed = 1234)
+
+tic()
+svm_poly_base_res <-
+  svm_poly_base_wf %>%
+  tune_bayes(
+    dt_folds, 
+    param_info = svm_poly_param1,
+    initial = 10, 
+    iter = 50,
+    metrics = perf_mx, 
+    control = bayes_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+```{r}
+svm_poly_base_res %>%
+  collect_metrics() %>%
+  pivot_longer(cost:margin,
+               names_to = 'param',
+               values_to = 'value') %>%
+  ggplot(aes(x = .iter, y = value)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  facet_wrap(~param, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine with Polynomial Kernel', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution (Base Recipe)', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+
+> Guidance: update parameter ranges to focus the search. The adjustments are based on the graph above.
+
+```{r}
+svm_poly_param2 <- svm_poly_base_wf %>%
+  parameters() %>%
+  update(cost = cost(range = c(-3, 3), trans = log2_trans()),
+         degree = degree_int(range = c(2, 5)),
+         margin = svm_margin(range = c(0, 0.1), trans = NULL),
+         scale_factor = scale_factor(range = c(-4, -1), trans = log10_trans())) 
+ 
+svm_poly_param2
+```
+
+> Guidance: tuning again with new constraints and allowing more iterations and iterations without improvement.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+bayes_ctrl <- control_bayes(no_improve = 30,
+                            save_pred = TRUE, 
+                            seed = 1234)
+
+tic()
+svm_poly_base_res <-
+  svm_poly_base_wf %>%
+  tune_bayes(
+    dt_folds, 
+    param_info = svm_poly_param2,
+    initial = 30, 
+    iter = 150,
+    metrics = perf_mx, 
+    control = bayes_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+```{r}
+svm_poly_base_res %>%
+  collect_metrics() %>%
+  pivot_longer(cost:margin,
+               names_to = 'param',
+               values_to = 'value') %>%
+  ggplot(aes(x = .iter, y = value)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  facet_wrap(~param, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine with Polynomial Kernel', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution (Base Recipe)', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+> Guidance: not great performance, bayesian optimization failed on both tries. Further experimentation could potentially follow. Let's see if the enhanced recipe is better.
+
+```{r}
+svm_poly_base_res %>%
+  show_best(metric = "f_meas") %>%
+  kable(digits = 4)
+```
+
+
++ Save your results to an external file.
+
+> Guidance: save.
+
+```{r}
+save(svm_poly_base_res, svm_poly_base_wf, file = "./res/svm_poly_base_res.Rda")
+```
+
+### Optimizing Enhanced Recipe
+
+> Guidance: the first run is based on standard model parameters. We adjust them further below.
+
+```{r}
+svm_poly_param_enh1 <- svm_poly_enh_wf %>%
+  parameters() %>%
+  update(cost = cost(range = c(-3, 3), trans = log2_trans()),
+         degree = degree_int(range = c(2, 5)),
+         margin = svm_margin(range = c(0, 0.15), trans = NULL),
+         scale_factor = scale_factor(range = c(-4, -1), trans = log10_trans())) 
+
+svm_poly_param_enh1
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+bayes_ctrl <- control_bayes(no_improve = 20,
+                            save_pred = TRUE, 
+                            seed = 1234)
+
+tic()
+svm_poly_enh_res <-
+  svm_poly_enh_wf %>%
+  tune_bayes(
+    dt_folds, 
+    param_info = svm_poly_param_enh1,
+    initial = 30, 
+    iter = 150,
+    metrics = perf_mx, 
+    control = bayes_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+```{r}
+svm_poly_enh_res %>%
+  collect_metrics() %>%
+  pivot_longer(cost:margin,
+               names_to = 'param',
+               values_to = 'value') %>%
+  ggplot(aes(x = .iter, y = value)) +
+  geom_point() + 
+  geom_line(color = 'grey85') +
+  facet_wrap(~param, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine with Polynomial Kernel', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution (Enhanced Recipe)', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+
+```{r}
+svm_poly_enh_res %>%
+  show_best(metric = "f_meas") %>%
+  kable(digits = 4)
+```
+
+
+
+```{r}
+save(svm_poly_enh_res, svm_poly_enh_wf, file = "./res/svm_poly_enh_res.Rda")
+```
+
+> Guidance: again, not great performance. Could fine tune or try another search method, but will instead spend some time with RBF Kernel.
+
+## SVM with RBF Kernel
+
+### SVM RBF Kernel Base Recipe
+
+> Guidance: the hyperparameters `rbf_sigma` and `margin` must be set to be tuned. 
+
+```{r}
+svm_rbf_mod <- 
+  svm_rbf(rbf_sigma = tune(),
+           margin = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('kernlab')
+```
+
+```{r}
+svm_rbf_base_wf <- 
+  workflow() %>%
+  add_recipe(svm_base_rec) %>%
+  add_model(svm_rbf_mod)
+
+svm_rbf_enh_wf <- 
+  workflow() %>%
+  add_recipe(svm_enh_rec) %>%
+  add_model(svm_rbf_mod)
+
+```
+
+
+
+> Guidance: the first run was based on standard model parameters (not shown). After the initial run, I added ranges to constrain the exploration region. 
+
+```{r}
+svm_rbf_param1 <- svm_rbf_base_wf %>%
+  parameters() 
+
+rbf_grid <- grid_latin_hypercube(
+  rbf_sigma(range = c(-8, -3)),
+  svm_margin(range = c(0, 0.1)),
+  size = 30
+)
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_grid(save_pred = TRUE)
+
+tic()
+svm_rbf_base_res <-
+  svm_rbf_base_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = rbf_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+
+```{r}
+svm_rbf_base_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = rbf_sigma, y = mean, color = margin)) +
+  geom_point() + 
+  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
+  facet_wrap(~.metric, scales = 'free') +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Latin Hypercube Results', 
+       x = 'RBF Sigma', y = 'F-measure')
+```
+
+
+```{r}
+svm_rbf_base_res %>%
+  show_best(metric = "f_meas") %>%
+  kable()
+```
+
+
+```{r}
+save(svm_rbf_base_res, svm_rbf_base_wf, file = "./res/svm_rbf_base_res.Rda")
+```
+
+### SVM RBF Kernel Enhanced Recipe
+
+> Guidance: the first run was based on standard model parameters (not shown). After the initial run, I added ranges to constrain the exploration region. 
+
+```{r}
+svm_rbf_param1 <- svm_rbf_enh_wf %>%
+  parameters() 
+
+rbf_grid <- grid_latin_hypercube(
+  rbf_sigma(range = c(-8, -3)),
+  svm_margin(range = c(0, 0.1)),
+  size = 30
+)
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_grid(save_pred = TRUE)
+
+tic()
+svm_rbf_enh_res <-
+  svm_rbf_enh_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = rbf_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+
+```{r}
+svm_rbf_enh_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = rbf_sigma, y = mean, color = margin)) +
+  geom_point() + 
+  geom_errorbar(aes(ymax = mean + std_err, ymin = mean - std_err)) +
+  facet_wrap(~.metric, scales = 'free') +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine', 
+       subtitle = 'Latin Hypercube Results', 
+       x = 'RBF Sigma', y = 'F-measure')
+```
+
+
+```{r}
+svm_rbf_enh_res %>%
+  show_best(metric = "f_meas") %>%
+  kable()
+```
+
+
+
+```{r}
+save(svm_rbf_enh_res, svm_rbf_enh_wf, file = "./res/svm_rbf_enh_res.Rda")
+```

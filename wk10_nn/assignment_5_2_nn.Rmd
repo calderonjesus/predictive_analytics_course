@@ -1,0 +1,277 @@
+---
+title: 'Assignment 5: Predicting Stock Returns'
+subtitle: 'Neural Networks (2/3)'
+author: "Jesús Calderón"
+date: "02/12/2021"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+## Neural Networks
+
+```{r, warning = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(doParallel)
+library(tictoc)
+library(knitr)
+```
+
+```{r}
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today) %>%
+  mutate(Direction = fct_relevel(Direction, 'Up'))
+```
+
+> Guidance: this solution includes a releveling of Direction such that "Up" is the first level. This is particularly relevant in the context of the problem since this is the level of importance (we care about "Up" movements). It has an effect on measures such as ROC AUC.
+
++ Train your models with a 5-fold cross-validation and 5 repetitions. Set the stratification variable to Direction and decide if Year should be a predictor.
++ Random seeds:
+
+  - Please, use seed 123 for the training/testing partition.
+  - Please, use seed 456 for the cross validation partition.
+
+```{r}
+set.seed(123)
+dt_split <- initial_split(market_dt, 
+                              prop = 0.7, 
+                              strata = Direction)
+dt_train <- training(dt_split)
+dt_test <- testing(dt_split)
+
+set.seed(456)
+dt_folds <- dt_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = Direction)
+```
+
+
++ Recipes. For each model, try two recipes: 
+  
+  - For each model, consult the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html). Add recipe components as recommended by the text. You can call this the "base" recipe.
+  - In addition to the recipe above, add another recipe with the intention of enahncing performance. Feel free to try any pre-processing step available in [the recipes library](https://recipes.tidymodels.org/reference/index.html). You can call this an "enhanced" recipe.
+
+
+> Guidance: 
+>
+>+ Apply a zero variance filter, `step_zv()`.
+>+ Apply decorrelation, `step_corr()` to .
+>+ Apply normalization, `step_normalize()`.
+>+ Apply Yeo-Johnson transform, `ste_YeoJohnson()`. 
+>+ The data set does not have missing values, therefore it is not necessary to apply missing value imputation.
+>+ Do not transform the target variable.
+
+```{r}
+nn_base_rec <- 
+  recipe(Direction ~ ., data = dt_train) %>%
+  step_mutate(Year = as.character(Year)) %>%
+  update_role(Year, new_role = 'ID') %>%
+  step_zv(all_predictors(), -Direction) %>%
+  step_corr(all_predictors(), -Direction) %>%
+  step_normalize(all_predictors(), -Direction) %>%
+  step_YeoJohnson(all_predictors(), -Direction)
+
+nn_base_rec %>%
+  prep() %>%
+  bake(dt_train)
+```
+
+
+> Guidance: the idea for the second recipe is to motivate experimentation. The base recipe should be enhanced with at least one additional step which could be a basis spline, Yeo-Johnoson transformation, a function of log transformation (log1p, for instance), etc. Some transformations may not have effect for certain models (normalization, for instance), so we are expecting that the recipe does have effect on performance.  
+> In this case, the recipe constrains the predictors and applies a basis spline transformation, but it is certainly not the only way to proceed.
+
+```{r}
+nn_enh_rec <- 
+  recipe(Direction ~ Lag1 + Lag2, data = dt_train) %>%
+  step_zv(all_predictors(), -Direction) %>%
+  step_corr(all_predictors(),-Direction) %>%
+  step_normalize(all_predictors(),-Direction) %>%
+  step_YeoJohnson(all_predictors(),-Direction) %>%
+  step_bs(all_predictors(),-Direction)
+
+nn_enh_rec %>%
+  prep() %>%
+  bake(dt_train)
+```
+
+
++ Hyperparameters.
+
+   - Train the models by starting with the based on the values recommended by the library `dials` and adjusting or fine-tuning them to enhance your models' performance. 
+  - I do not expect you to show all of your experiments (but you are free to show as many as you want), but do explain your parameter choices and how you arrived to them.
+  - For the Neural Net: tune the number of hidden units and the penalty parameter. You can try to tune epochs, too, however this may by somewhat time-consuming. My recommendation is to work with 250-300 epochs.
+  - For each algorithm, please train at least 20 parameter combinations. You are free to chose the grid of your preference (regular, Latin Hypercube, Bayesian optimization, or a sequential combination of these methods).
+
+
+## Hyperparameter Tuning
+
+> Guidance: the hyperparameters `hidden_units` and `penalty` must be set to be tuned. The parameter `epoch` could be tuned or, as I show below, fixed at a number of epochs sufficiently high (in the low hundres, at least).
+
+```{r}
+nn_mod <- 
+  mlp(hidden_units = tune(), 
+      penalty = tune(),
+      epochs = 300) %>%
+  set_mode('classification') %>%
+  set_engine('nnet')
+```
+
+```{r}
+nn_base_wf <- 
+  workflow() %>%
+  add_recipe(nn_base_rec) %>%
+  add_model(nn_mod)
+
+nn_enh_wf <- 
+  workflow() %>%
+  add_recipe(nn_enh_rec) %>%
+  add_model(nn_mod)
+
+```
+
+
++ Validation results are sufficient. At this point, we have not finished all the model assessments that we would like (SVMs and Neurual Nets will be coming in the next assignment), so we will wait a little longer before testing.
+
+
+> Guidance: the main performance metric to be optimized should come first in the metric set. 
+>
+>+ Kappa (`kap`) and f-measure (`f_meas`) make sense in this context. Kappa will give us accuracy adjusted to randomness and, in a sense, will give us a measure of "skill" of the algorithm. F-measure will give us a combination of precision and recall. If F-measure is chosen, Direction should have "Up" as the first level.
+>+ Precision or Recall could be chosen, but the student needs to be clear as to what is being optimized. This will come out in the summary report. 
+>+ Accuracy could be used, but it will not give a measure adjusted by randomness such as kappa. Accuracy is not a great choice. ROC AUC makes sense for imbalanced classes, but other metrics may be better choices in this case.
+
+
+```{r}
+perf_mx <- metric_set(f_meas, kap, precision, recall, accuracy)
+```
+
+### Optimizing Base Recipe
+
+> Guidance: the grid specification below uses a combination of `parameters()` and `update()`. It can be produced with other methods and submissions may explore the parameter grid using Latin hypercube or Bayesian optimization.
+> 
+>+ I tested hidden units between 1 and 64. Depending on the performance metric to be utilized this number may be enough, but the range could also be expanded. From my experiments, it appears that kappa may benefit from using a larger number of hidden units. 
+>+ Penalty values are constrained below 1, which is different from the default range. In particular, the default range includes 10^0, which is not a typical value of penalty. If a submission includes penalty = 1 it is still correct, but unusual.
+
+
+```{r}
+nn_grid <- crossing(hidden_units = c(1, 2, 4, 8, 16, 32, 64),
+                    penalty = c(0.001, 0.005, 0.01, 0.05, 0.1, 0.5))
+
+nn_grid %>% head()
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_grid(save_pred = TRUE)
+
+tic()
+nn_base_res <-
+  nn_base_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = nn_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+
+
+```{r}
+nn_base_res %>%
+  collect_metrics() %>%
+  mutate(penalty = as_factor(round(penalty, 4))) %>%
+  ggplot(aes(x = hidden_units, y = mean, color = penalty, group = penalty)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = mean - std_err, ymax = mean + std_err)) +
+  geom_line() +
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine with Polynomial Kernel', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution (Base Recipe)', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+
+```{r}
+nn_base_res %>%
+  show_best()
+```
+> Guidance: the results above may indicate that a logistic regression could potentially be found that achieves similar performance.
+
+
+```{r}
+save(nn_base_res, nn_base_wf, file = "./res/nn_enh_res.Rda")
+```
+
+## Enhanced Recipe
+
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_grid(save_pred = TRUE)
+
+tic()
+nn_enh_res <-
+  nn_enh_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = nn_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+
+
+```{r}
+nn_enh_res %>%
+  collect_metrics() %>%
+  mutate(penalty = as_factor(round(penalty, 4))) %>%
+  ggplot(aes(x = hidden_units, y = mean, color = penalty, group = penalty)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = mean - std_err, ymax = mean + std_err)) +
+  geom_line() +
+  facet_wrap(~.metric, scales = 'free', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Support Vector Machine with Polynomial Kernel', 
+       subtitle = 'Bayesian Optimization: Parameter Evolution (Base Recipe)', 
+       x = 'Iteration', y = 'Param Value')
+```
+
+
+```{r}
+nn_enh_res %>%
+  show_best()
+```
+> Guidance: the results above may indicate that a logistic regression could potentially be found that achieves similar performance.
+
+
+```{r}
+save(nn_enh_res, nn_enh_wf, file = "./res/nn_enh_res.Rda")
+```

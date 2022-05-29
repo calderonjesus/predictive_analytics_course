@@ -1,0 +1,123 @@
+---
+title: "Assignment 5: Predicting Stock Returns (part 2)"
+subtitle: "AFM 415: Foundations of Machine Learning"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+
+
+# Introduction
+
+Congratulations. You have been hired by a hedge fund. Your new boss took a PhD course with Gareth James at USC and, as a first task, they ask you to replicate his stock prediction experiments. 
+
+The objective is to forecast if the SP500 will increase or decrease given a history of the last five days' returns, as well as the last day's trading volume. You will work with five years' worth of daily data and you must provide a prediction for the Direction of the SP500, which can be "Up" or "Down". 
+
+Given that you are new to the firm, you will only be allowed to take long positions (i.e., predicting "up" movements correct is of curcial importance); however, if you find that your algorithm performs well for short positions (i.e., it predicts "down" movements with great performance), your report should highlight this fact. Taking a long position means that you will be able to buy the index (say, through an ETF or a future) and you would profit when the "Up" prediction is accurate; conversely, if you were to take a "short position" (borrowing the ETF and selling it, to repurchase it at the end of the day and return it to the original owner), you would profit when the "Down" prediction is accurate.
+
+As a reminder, your boss texts you: "This is a Hedge Fund. We are concerned with making money and we do not really care too much how we make it (but don't do anything illegal). Get me good predictions!"
+
+# General Guidelines
+
+This assignment will be combined with assignment 4 to produce a report of your findings. For this assignment, you will submit two working papers: 
+
++ Support Vector Machine
++ Neural Networks
+
+In addition, please provide a summary of your overall results. Identify the best-performing model, and test it. Guidelines are shown further below.
+
+## Model Experiments
+
++ You will train and evaluate the following models:
+
+  - SVM using a polynomial kernel
+  - SVM using an RBF kernel
+  - Single-Layer Neural Net
+
++ Train your models with a 5-fold cross-validation and 5 repetitions. Set the stratification variable to Direction and decide if Year should be a predictor.
++ Random seeds:
+
+  - Please, use seed 123 for the training/testing partition.
+  - Please, use seed 456 for the cross validation partition.
+
++ Recipes. For each model, try two recipes: 
+  
+  - For each model, consult the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html). Add recipe components as recommended by the text. You can call this the "base" recipe.
+  - **Optionally**, enhance the recipe above with additional steps to enhance performance. Feel free to try any pre-processing step available in [the recipes library](https://recipes.tidymodels.org/reference/index.html). You can call this an "enhanced" recipe.
+ 
++ Hyperparameters.
+
+  - Train the models by starting with the based on the values recommended by the library `dials` and adjusting or fine-tuning them to enhance your models' performance. 
+  - I do not expect you to show all of your experiments (but you are free to show as many as you want), but do explain your parameter choices and how you arrived to them.
+  - For the SVM model with RBF kernel: tune RBF sigma and margin. Feel free to use any search strategy that you deem appropriate.
+  - For the SVM model with polynomial kernel: tune the cost and margin svm parameters, as well as the degree of the polynomial and the scale factor. Feel free to use a Bayesian optimizer. 
+  - For the Neural Net: tune the number of hidden units and the penalty parameter. You can try to tune epochs, too, however this may by somewhat time-consuming. My recommendation is to work with 250-300 epochs.
+  - For each algorithm, please train at least 20 parameter combinations. You are free to chose the grid of your preference (regular, Latin Hypercube, Bayesian optimization, or a sequential combination of these methods).
+
++ Validation results are sufficient. At this point, we have not finished all the model assessments that we would like (SVMs and Neurual Nets will be coming in the next assignment), so we will wait a little longer before testing.
+
++ Save your results to an external file.
+
+## A Note on Working papers
+
+These submissions are working papers that will build up to a larger project with the results of our next assignment. The EDA is important and will mostly be transferred verbatum to the final report. However, the working papers are meant to be appendices and not full reports in themselves. Write them accordingly.
+
+Working documents must be sufficient for a knowledgeable peer to understand and reproduce your work. You can think of them as working papers in an audit file or research report. Add sufficient details and structure for this purpose, but there is not prescribed template that you need to follow.
+
+As a recommendation, create an Rmd file per model family. Each file will have the same components and you can create your own template for this. At the end of cross validation, simply save your results using `save()` as we did in the lectures. Later, in the main report you will be able to `load()` these results to use in your discussion.
+
+Submit your RMD and HTML files (no need to submit the Rda files). Include a floating table of contents in you HTML and display your code. 
+
+# Summary Report
+
+In a separate document, put together all your individual results. The report does not need to be overly complex. It must basically tell the story of the model selection process. 
+
+Include the following sections:
+
++ Introduction:
+
+  * Problem statement.
+  * Model assessment: explain the performance metric of your choice, cross-validation settings, splitting proportions and stratification.
+  * Exploratory Data Analysis.
+  * Highlights of your conclusions.
+  
++ Model Validation Results
+
+  * Add a subsection for each model with the most relevant results. 
+  * In each subsection, include the highlights of your tests: which recipe performed better, which hyperparameters were tested (consider using a visualization) and select the best-performing parameter configuration. 
+
++ Model Test
+
+  * Select the best-performing model out of the options in the previous section.
+  * Use the test set to test this model and present your results.
+  
++ Conclusion
+
+  * Would you recommend your model to implement a trading strategy?
+  * How would you implement the strategy assuming that you can only take long exposures to the SP500 using ETFs or derivatives?
+  * Would your model also support a strategy based on short positions? How?
+
+
+# Obtaining the Data
+
+You can load the data with the code below.
+
+```{r}
+library(tidyverse)
+library(ISLR)
+
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today)
+```
+
+
+  
