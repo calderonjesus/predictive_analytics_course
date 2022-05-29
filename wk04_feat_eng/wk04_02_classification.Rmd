@@ -1,0 +1,587 @@
+---
+title: "Classification Models"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: FALSE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+# What is Classification?
+
+We have seen regression models that aim to predict numeric values. A large class of prediction problems are of a different kind. When we want to predict a *categorical* variable (sometimes called *class* or *qualitative* variables), we say that we are in the *classification* settings. A few examples include:
+
++ Predicting default based on profiles of borrowers (binary).  
++ Predict if a stock price will increase by the close of the next day (binary).
++ Predict precipitation in the next hour (binary).
++ Determine if a transaction is fraudulent (binary). 
++ Predict which (out of n) version of a landing page will convince a prospective customer to "convert" (multiclass).
+
+In a classification problem, the objective is to assign each observation to a class. However, the methods used for classification often give us a richer result: they afford the probability of assigning each of the classes as the basis for making the classification. For instance, instead of the result being simply '1' indicating that it will rain in the next hour, we will get a prediction such as '0.7', which can be interpreted as "there is a likelihood of 70% that it will rain in the next hour".
+
+This result informs us of the most likely outcome and the uncertainty around the prediction. It is much different to read "51% chance of rain" than to read "95% chance of rain".
+
+A classification technique is called a *classifier*. The most widely used are:
+
++ Logistic Regression.
++ Linear Discriminant Analysis (LDA).
++ k-Nearest Neighbours.
+
+We will cover these classifiers in this module, leaving decision trees, random forests, and boosting, as well as Support Vector Machines (SVMs) and Neural Nets (NN) for later modules.
+
+# Converting a Regression Problem to a Classification Problem
+
+Classification problems are prevalent. Therefore there is a wide array of methods to attack these problems. We may often find it convenient to transform a regression problem to a classification problem via variable transformations such as discretization (binning) or dummy/one-hot encoding.
+
+In the tidymodels framework, as noted by [Khun and Silge (2021)](https://www.tmwr.org/recipes.html), it is preferable to perform **simple** transformations of the response variable outside of the recipe:
+
+> For simple transformations of the outcome column(s), we strongly suggest that those operations be conducted outside of the recipe.
+
+# Default Data Set: EDA
+
+To illustrate classification, we will work with the Default data set. To access it, please run `install.packages('ISLR')` in the console.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(knitr)
+library(ISLR)
+data('Default')
+
+glimpse(Default)
+```
+This data set contains four variables related to a credit card default prediction problem. We are interested in predicting if a client will default on their credit card payment given three predictors described below:
+
++ `default` a Yes/No indicator if a client has defaulted on their credit card payment.
++ `student` a Yes/No indicator if a client is a student.
++ `balance` represents monthly credit card balance.
++ `income` represents annual income.
+
+## Distribution of Default Indicators
+
+The distribution of default is similar to the one observed in other risk problems: the risky event is a minority class. 
+
+
+```{r}
+Default %>%
+  ggplot(aes(x = default)) + 
+  geom_bar() +
+  labs(title = 'Distribution of Default Indicator',
+       x = 'Default', y = 'Frequency') +
+  theme_minimal() 
+```
+
+## Monthly Balance and Annual Income
+
+From the chart below, it appears that the monthly balance may be a predictor for default.
+
+```{r}
+Default %>%
+  ggplot(aes(x = balance, y = income, colour = default)) + 
+  geom_point(alpha = 0.4, size = 0.75) +
+  theme_minimal() +
+  scale_color_brewer(type = 'qual', palette = 2) +
+  labs(title = 'Default on Credit Card Payments', 
+       subtitle = 'Annual Income and Monthly Balance | n = 10,000',
+       x = 'Monthly Balance', y = 'Annual Income')
+```
+
+Alternatively, we can consider the distribution of these variables.
+
+```{r}
+Default %>%
+  ggplot(aes(x = default, fill = default)) + 
+  geom_boxplot(aes(y = income)) +
+  theme_minimal() +
+  scale_fill_brewer(type = 'qual', palette = 2) +
+  labs(title = 'Default on Credit Card Payments', 
+       subtitle = 'Annual Income | n = 10,000',
+       y = 'Annual Income', x = 'Default') +
+  guides(fill = FALSE)
+```
+
+```{r}
+Default %>%
+  ggplot(aes(x = default, fill = default)) + 
+  geom_boxplot(aes(y = balance)) +
+  theme_minimal() +
+  scale_fill_brewer(type = 'qual', palette = 2) +
+  labs(title = 'Default on Credit Card Payments', 
+       subtitle = 'Monthly Balance | n = 10,000',
+       y = 'Annual Income', x = 'Default') +
+  guides(fill = FALSE)
+```
+
+## Student Status Indicator
+
+```{r}
+Default %>%
+  ggplot(aes(x = student)) + 
+  geom_bar() +
+  labs(title = 'Distribution of Student Status Indicator',
+       x = 'Student', y = 'Frequency') +
+  theme_minimal() 
+```
+
+## Joint Distributions
+
+```{r}
+library(GGally)
+Default %>%
+  ggpairs() +
+  theme_minimal()
+```
+
+
+# Predicting Defaults
+
+We already know a reasonably reliable and parsimonious prediction method, linear regression. Why not use linear regression?
+
+Potentially, we could use a dummy-variable transformation for our response variable, default. In that case, we would see something along the lines of `default = 0` if there was no default and `default = 1`. We could then fit a linear regression model with a specification such as `default ~ balance + income + student` or `default ~ balance + income`. With the model, we could (somewhat arbitrarily) state that if the prediction is greater than 0.5 (or another threshold), we predict a default event, and if the prediction is a value less than 0.5, we predict no default.
+
+The problem with this approach is that we may get values that are greater than 1 and less than 0, which makes it difficult to interpret as probabilities. However, the responses are in the right order (they are ranked correctly). Additionally, we would not be able to encode a three or more class problem.
+
+```{r}
+
+def_rec <-
+  recipe(default ~ balance, data=Default) %>%
+  step_dummy(default)
+
+def_rec_prep <- prep(def_rec) %>%
+  bake(new_data = NULL)
+
+lin_mod <- 
+  linear_reg() %>%
+  set_engine('lm')
+
+# Please note, there is a better way of writing the command below.
+# We will evolve our specifications using recipes.
+
+lin_mod_fit <- 
+  lin_mod %>%
+  fit(default_Yes ~ balance, data=def_rec_prep)
+
+dt <- def_rec_prep %>%
+  bind_cols(predict(lin_mod_fit, new_data = def_rec_prep)) %>%
+  rename(default_pred = .pred)
+
+dt %>%
+  ggplot(aes(x = balance)) + 
+  geom_point(aes(y = default_Yes, colour = 'Observed')) +
+  geom_line(aes(y = default_pred, colour = 'Predicted')) + 
+  scale_color_brewer(type = 'qual', palette = 3) +
+  theme_minimal() + 
+  labs(title = 'Fitted linear regression model', 
+       subtitle = 'default ~ balance',
+       x = 'Monthly Balance', y = 'Default Indicator')
+
+```
+
+There is a better way: logistic regression.
+
+# Logistic Regression
+
+Logistic regression is a model based on linear regression. The idea is that we can transform the problem into an equivalent calculation: estimate the log-odds of the event we are interested in (default, in our example).
+
+The odds of an event Y (e.g., default) given that we observe data X (e.g., balance) are P(Y = 1|X). For breivity, we write p(X) = P(Y = 1|X): 
+
+$$
+odds =\frac{p(X)}{1-p(X)}
+$$
+We take logs on both sides and we obtain the log-odds or *logit*:
+
+$$
+log(odds) =log\left({\frac{p(X)}{1-p(X)}}\right)
+$$
+
+We then assume the following model:
+
+$$
+log\left({\frac{p(X)}{1-p(X)}}\right) = \beta_{0} + \beta_{1}X
+$$
+
+That is, that the log-odds of event Y given we know X are a linear function of input X. If we solve for p(X), then:
+
+$$
+p(X) = \frac{e^{\beta_{0} + \beta_{1}X}}{1+e^{\beta_{0} + \beta_{1}X}}
+$$
+
+
+The function 
+
+$$
+f(z) = \frac{e^z}{1+e^z}
+$$ 
+
+is called the *logistic function* and it will always take a value between 0 and 1 for any z.
+
+```{r logistic}
+logistic_dt <- tibble(z = seq(-5,5, 0.1)) %>%
+                mutate(y = exp(z)/(1+exp(z)))
+                      
+logistic_dt %>%
+  ggplot(aes(x = z, y = y)) +
+  geom_point() +
+  labs(title = 'The Logistic Function') +
+  theme_minimal()
+```
+
+We will not cover the estimation process for this model. However, we state the following:
+
++ Typically, the model is estimated usinng a method called *maximum likelihood*.
++ We can estimate the regression, then transform the results/predictions to obtain the estimate of p(x) = P(Y = 1 | X).
+
+## Define train and test set
+
+We start with an initial split, stratifying by our response variable, default. We do this to preserve the same proportions of default/no default in our training and test sets.
+
+```{r}
+set.seed(9876)
+default_split <- initial_split(Default, 
+                               prop=0.7,
+                               strata=default)
+dt_other <- training(default_split)
+dt_test <- testing(default_split)
+
+
+other_split <- initial_split(dt_other, 
+                             prop=0.7,
+                             strata=default)
+dt_train <- training(other_split)
+dt_val <- testing(other_split)
+
+```
+
+## Logistic Regression in tidymodels
+
+The model is specified with `logistic_reg()`. This function, implements two hyperparameters for regularization: `penalty` and `mixture`. Logistic Regression's mode is always classification.
+
+The available engines are:
+
++ `glm` or `glmnet` from Base R.
++ `stan` uses the stan library.
++ `spark` gives you access to logistic regression on Spark.
++ `keras` gives you access to an underlying keras engine.
+
+
+```{r}
+log_reg_mod <-
+  logistic_reg() %>%
+  set_engine('glm')
+
+# Please note, there is a better way of writing the command below.
+# We will evolve our specifications using recipes.
+
+log_reg_mod_fit <- 
+  log_reg_mod %>%
+  fit(default ~ balance, data=dt_train)
+
+log_reg_dt <- dt_train %>%
+  bind_cols(
+    predict(log_reg_mod_fit, new_data = dt_train),
+    predict(log_reg_mod_fit, new_data = dt_train, type = 'prob')
+  ) 
+
+log_reg_dt %>%
+  ggplot(aes(x = balance)) + 
+  geom_line(aes(y = .pred_Yes, colour = .pred_class)) + 
+  scale_color_brewer(type = 'qual', palette = 3) +
+  theme_minimal() + 
+  labs(title = 'Fitted linear regression model', 
+       subtitle = 'default ~ balance',
+       x = 'Monthly Balance', y = 'Default Indicator')
+```
+
+As in the case of linear regression, we can extract details about the model parameters:
+
+```{r}
+tidy(log_reg_mod_fit) %>%
+  kable()
+```
+
+
+The interpretation of the parameters' standard error is similar: they measure parameter uncertainty and can be assessed or compared to the estimate itself. The p-value also has a similar interpretation.
+
+## Perfromance
+
+For the moment, we will use the default two performance measures when we compare predicted and actual classes: 
+
++ `accuracy`: the proportion of data that are predicted correctly.
++ `kap` or Kappa: a measure similar to accuracy but normalized by the accuracy that would be expected by chance alone. This is useful when we observe class imbalance. 
+
+*Class imbalance* occurs when we see one or more majority classes and a small but important minority class. We typically care about the minority class.
+
+```{r}
+log_reg_perf <- list()
+
+log_reg_perf[['train']] <- metrics(log_reg_dt, 
+                         truth = default, 
+                         estimate = .pred_class) 
+
+log_reg_val_dt <- dt_val %>%
+  bind_cols(
+    predict(log_reg_mod_fit, new_data = dt_val),
+    predict(log_reg_mod_fit, new_data = dt_val, type = 'prob')
+  ) 
+
+log_reg_perf[['validation']] <- metrics(log_reg_val_dt, 
+                                        truth = default, 
+                                        estimate = .pred_class) 
+
+log_reg_perf <- bind_rows(log_reg_perf, .id='Type')
+log_reg_perf %>%
+  kable()
+```
+
+We get a high accuracy score. However, notice that about 3% of the observations are defaults. Does this performance measure tell us something interesting about our model? What does a Kappa of around 40-50% mean?
+
+
+## Multiple Logistic Regression
+
+Our data contains more than one predictor that we can use.
+
+```{r}
+log_reg_mult_fit <- 
+  log_reg_mod %>%
+  fit(default ~ balance + income + student, data=dt_train)
+
+tidy(log_reg_mult_fit) %>%
+  kable()
+```
+
+
+```{r}
+multi_dt <- dt_train %>%
+  bind_cols(
+    predict(log_reg_mult_fit, new_data = dt_train),
+    predict(log_reg_mult_fit, new_data = dt_train, type = 'prob')
+  ) 
+
+metrics(multi_dt, truth = default, estimate = .pred_class) %>%
+  kable()
+```
+
+
+Income does not appear to be a significant predictor. Let's try removing it.
+
+```{r}
+log_reg_mult_fit <- 
+  log_reg_mod %>%
+  fit(default ~ balance + student, data=dt_train)
+
+tidy(log_reg_mult_fit) %>%
+  kable()
+```
+
+We calculate performance metrics.
+
+```{r}
+logreg_perf <- list()
+
+logreg_dt <- dt_train %>%
+  bind_cols(
+    predict(log_reg_mult_fit, new_data = dt_train),
+    predict(log_reg_mult_fit, new_data = dt_train, type = 'prob')
+  ) 
+
+logreg_perf[['train']] <- metrics(logreg_dt, 
+                          truth = default, 
+                          estimate = .pred_class) 
+
+
+logreg_val_dt <- dt_val %>%
+  bind_cols(
+    predict(log_reg_mult_fit, new_data = dt_val),
+    predict(log_reg_mult_fit, new_data = dt_val, type = 'prob')
+  ) 
+
+logreg_perf[['validation']] <- metrics(logreg_val_dt, 
+                                        truth = default, 
+                                        estimate = .pred_class) 
+
+logreg_perf_dt <- bind_rows(log_reg_perf)
+logreg_perf_dt %>%
+  kable()
+```
+
+# Linear Discriminant Analysis
+
+Some alternative models are parametric and simple, resulting in linear decision boundaries. One of them is Linear Discriminant Analysis (LDA). In this case, we model the distribution of the predictors X separately in each response class (Y) and then use Bayes' Theorem to convert them to P(Y=k|X).  
+
+We won't discuss the method in depth, but consider that Bayes' Theorem is one of the fundamental results in statistics, ML, and many other areas of knowledge. This Theorem allows us to update our beliefs about the world, when we observe data:
+
+$$
+P(Y|X) = \frac{P(Y, X)}{P(X)}
+$$
+
+There are several reasons to use LDA instead of Logistic Regression (James et al., 2013):
+
++ When the classes are well-separated, the parameters from logistic regression tend to be unstable. LDA does not suffer from this problem.
++ If n is small and the distribution of predictors X is approximately normal, the LDA model is more stable than logistic regression.
++ The method can jointly predict several classes. 
++ The method is analytical and produces results with speed.
+
+## Implementation
+
+In tidymodels, LDA is implemented in `discrim_linear()`. It implements one hyperparameter, `penalty`, which is a non-negative number representing the amount of regularization used by some engines.
+
+Two engines can be used: `"MASS"` (the default) or `mda`.
+
+The tidymodels group of libraries are fairly recent, but have been built on long-standing libraries. The library `discrim` that contains LDA is distributed through a public repository on github. To install it do the following:
+
+
++ Save your work and restart RStudio. 
++ Install devtools: if you have not done so before, run `install.packages('devtools')` in the console.
++ Install Rtools40:
+  * If you are using Windows, follow these instructions to install Rtools40: [Rtools40 at CRAN](https://cran.r-project.org/bin/windows/Rtools/). 
+  * This step is not required for Mac users and you can skip it. You can read more here: [Mac OS and Rtools40](https://cran.r-project.org/bin/macosx/tools/).
++ Install discrim: run `devtools::install_github("tidymodels/discrim")` in the console. 
+
+```{r}
+library(discrim)
+lda_mod <- 
+  discrim_linear() %>%
+  set_engine("MASS")
+
+lda_fit <- 
+  lda_mod %>%
+  fit(default ~ balance  + student, data = dt_train)
+
+lda_fit
+```
+
+
+```{r}
+lda_dt <- dt_train %>%
+  bind_cols(
+    predict(lda_fit, new_data = dt_train),
+    predict(lda_fit, new_data = dt_train, type = 'prob')
+  ) 
+
+lda_perf <- list()
+
+lda_perf[['train']] <- metrics(lda_dt, 
+                               truth = default, 
+                               estimate = .pred_class)
+
+lda_val_dt <- dt_val %>%
+  bind_cols(
+    predict(lda_fit, new_data = dt_val),
+    predict(lda_fit, new_data = dt_val, type = 'prob')
+  ) 
+
+lda_perf[['validation']] <- metrics(lda_val_dt, 
+                               truth = default, 
+                               estimate = .pred_class)
+
+lda_perf_dt <- bind_rows(lda_perf, .id='Type')
+  
+  
+lda_perf_dt %>%
+  kable()
+```
+
+# Confusion Matrix
+
+A different way of looking at the errors is through a confusion matrix. This view allows us to analyze the types of errors that our classifier is making.
+
+The confusion matrix shows correctly predicted observations and false positives (predicted Yes, but really No default) and false negatives (predicted No, but really Yes).
+
+
+```{r}
+lda_val_dt %>%
+  conf_mat(truth = default, 
+           estimate = .pred_class)
+```
+
+We now see that this classifier is behaving differently per class. In the case of defaults, it correctly classified only 25 out of 67 defaulted cases (37%). In the minority class (default) this model has an unacceptable error on the validation set. The error in the minority class, 63% (1-25/67), is unacceptable because the default case are the ones that we are looking to predict. Meanwhile, accuracy in the majority (non-default) class performance is +99%.
+
+For this type of discussion, we can use the following terms:
+
+* *Sensitivity* is the percentage of true positive cases (true defaults) that are identified. In our case, this is 25/67 or 37.3%.
+* *Specificity* is the percentage of true negatives (true non-defaulters) that are correctly identified. In our example, it is 2026/2033 or 99.7%.
+
+This is a property of LDA: it will try to minimize the overall error, without considering class imbalance.
+
+
+# k-Nearest Neighbours
+
+As in the case of regression, we can also implement a k-Nearest Neighbours classifier. 
+
+The mechanics are generally similar. The model takes a hyperparameter (k) that defines a boundary or neighbourhood. The predicted class of a given observation is the majority class in that neighbourhood. For instance, if an observation is "surrounded" by defaulted nieghbours, it will be predicted as default.
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors=30) %>%
+  set_engine("kknn") %>%
+  set_mode('classification')
+
+def_rec <- 
+  recipe( default ~ balance + income + student, 
+         data = dt_train) %>%
+  step_dummy(student)
+
+def_rec_prep <- prep(def_rec, training = dt_train) %>%
+  bake(new_data = dt_train)
+
+knn_fit <- 
+  knn_mod %>%
+  fit(default ~ balance + income + student_Yes, data = def_rec_prep)
+
+```
+
+We measure the k-NN model's performance under the training and validation set.
+
+```{r}
+knn_dt <- dt_train %>%
+  bind_cols(
+    predict(knn_fit, new_data = def_rec_prep),
+    predict(knn_fit, new_data = def_rec_prep, type = 'prob')
+  ) 
+
+knn_perf <- list()
+
+knn_perf[['train']] <- metrics(knn_dt, 
+                               truth = default, 
+                               estimate = .pred_class)
+
+```
+
+
+```{r}
+def_rec_val_prep <- prep(def_rec, training = dt_train) %>%
+  bake(new_data = dt_val)
+```
+
+```{r}
+knn_val_perf <- dt_val %>%
+  bind_cols(
+    predict(knn_fit, new_data = def_rec_val_prep),
+    predict(knn_fit, new_data = def_rec_val_prep, type = 'prob')
+  ) 
+
+knn_perf[['validation']] <- metrics(knn_val_perf, 
+                               truth = default, 
+                               estimate = .pred_class)
+
+knn_perf_dt <- bind_rows(knn_perf, .id='Type')
+  
+  
+knn_perf_dt %>%
+  kable()
+```
+
+
+# Final Thoughts
+
+We have seen three classification methods and initial applications of recipes. At this point, we are left with more questions than answers, but with a path that will direct further modules:
+
++ We continue working with linear models and k-NN. We may benefit from having more flexible methods.
++ We need techniques to address class imbalance, including appropriate performance measures and a way to enhance our classifiers' performance.
++ Although R and the tidyverse provide useful functions to manipulate data, we are approaching a point where it is too cumbersome to experiment and maintain results by hand.  

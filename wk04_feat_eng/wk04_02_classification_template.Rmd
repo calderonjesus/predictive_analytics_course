@@ -1,0 +1,334 @@
+---
+title: "Classification Models"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+# What is Classification?
+
+We have seen regression models that aim to predict numeric values. A large class of prediction problems are of a different kind. When we want to predict a *categorical* variable (sometimes called *class* or *qualitative* variables), we say that we are in the *classification* settings. A few examples include:
+
++ Predicting default based on profiles of borrowers (binary).  
++ Predict if a stock price will increase by the close of the next day (binary).
++ Predict precipitation in the next hour (binary).
++ Determine if a transaction is fraudulent (binary). 
++ Predict which (out of n) version of a landing page will convince a prospective customer to "convert" (multiclass).
+
+In a classification problem, the objective is to assign each observation to a class. However, the methods used for classification often give us a richer result: they afford the probability of assigning each of the classes as the basis for making the classification. For instance, instead of the result being simply '1' indicating that it will rain in the next hour, we will get a prediction such as '0.7', which can be interpreted as "there is a likelihood of 70% that it will rain in the next hour".
+
+This result informs us of the most likely outcome and the uncertainty around the prediction. It is much different to read "51% chance of rain" than to read "95% chance of rain".
+
+A classification technique is called a *classifier*. The most widely used are:
+
++ Logistic Regression.
++ Linear Discriminant Analysis (LDA).
++ k-Nearest Neighbours.
+
+We will cover these classifiers in this module, leaving decision trees, random forests, and boosting, as well as Support Vector Machines (SVMs) and Neural Nets (NN) for later modules.
+
+# Converting a Regression Problem to a Classification Problem
+
+Classification problems are prevalent. Therefore there is a wide array of methods to attack these problems. We may often find it convenient to transform a regression problem to a classification problem via variable transformations such as discretization (binning) or dummy/one-hot encoding.
+
+In the tidymodels framework, as noted by [Khun and Silge (2021)](https://www.tmwr.org/recipes.html), it is preferable to perform **simple** transformations of the response variable outside of the recipe:
+
+> For simple transformations of the outcome column(s), we strongly suggest that those operations be conducted outside of the recipe.
+
+# Default Data Set: EDA
+
+To illustrate classification, we will work with the Default data set. To access it, please run `install.packages('ISLR')` in the console.
+
+```{r}
+
+```
+
+This data set contains four variables related to a credit card default prediction problem. We are interested in predicting if a client will default on their credit card payment given three predictors described below:
+
++ `default` a Yes/No indicator if a client has defaulted on their credit card payment.
++ `student` a Yes/No indicator if a client is a student.
++ `balance` represents monthly credit card balance.
++ `income` represents annual income.
+
+## Distribution of Default Indicators
+
+The distribution of default is similar to the one observed in other risk problems: the risky event is a minority class. 
+
+
+```{r}
+
+```
+
+## Monthly Balance and Annual Income
+
+From the chart below, it appears that the monthly balance may be a predictor for default.
+
+```{r}
+
+```
+
+Alternatively, we can consider the distribution of these variables.
+
+```{r}
+
+```
+
+```{r} 
+
+```
+
+## Student Status Indicator
+
+```{r}
+
+```
+
+## Joint Distributions
+
+```{r}
+
+```
+
+
+# Predicting Defaults
+
+We already know a reasonably reliable and parsimonious prediction method, linear regression. Why not use linear regression?
+
+Potentially, we could use a dummy-variable transformation for our response variable, default. In that case, we would see something along the lines of `default = 0` if there was no default and `default = 1`. We could then fit a linear regression model with a specification such as `default ~ balance + income + student` or `default ~ balance + income`. With the model, we could (somewhat arbitrarily) state that if the prediction is greater than 0.5 (or another threshold), we predict a default event, and if the prediction is a value less than 0.5, we predict no default.
+
+The problem with this approach is that we may get values that are greater than 1 and less than 0, which makes it difficult to interpret as probabilities. However, the responses are in the right order (they are ranked correctly). Additionally, we would not be able to encode a three or more class problem.
+
+```{r}
+
+```
+
+There is a better way: logistic regression.
+
+# Logistic Regression
+
+Logistic regression is a model based on linear regression. The idea is that we can transform the problem into an equivalent calculation: estimate the log-odds of the event we are interested in (default, in our example).
+
+The odds of an event Y (e.g., default) given that we observe data X (e.g., balance) are P(Y = 1|X). For breivity, we write p(X) = P(Y = 1|X): 
+
+$$
+odds =\frac{p(X)}{1-p(X)}
+$$
+We take logs on both sides and we obtain the log-odds or *logit*:
+
+$$
+log(odds) =log\left({\frac{p(X)}{1-p(X)}}\right)
+$$
+
+We then assume the following model:
+
+$$
+log\left({\frac{p(X)}{1-p(X)}}\right) = \beta_{0} + \beta_{1}X
+$$
+
+That is, that the log-odds of event Y given we know X are a linear function of input X. If we solve for p(X), then:
+
+$$
+p(X) = \frac{e^{\beta_{0} + \beta_{1}X}}{1+e^{\beta_{0} + \beta_{1}X}}
+$$
+
+
+The function 
+
+$$
+f(z) = \frac{e^z}{1+e^z}
+$$ 
+
+is called the *logistic function* and it will always take a value between 0 and 1 for any z.
+
+```{r logistic}
+
+```
+
+We will not cover the estimation process for this model. However, we state the following:
+
++ Typically, the model is estimated usinng a method called *maximum likelihood*.
++ We can estimate the regression, then transform the results/predictions to obtain the estimate of p(x) = P(Y = 1 | X).
+
+## Define train and test set
+
+We start with an initial split, stratifying by our response variable, default. We do this to preserve the same proportions of default/no default in our training and test sets.
+
+```{r}
+
+```
+
+## Logistic Regression in tidymodels
+
+The model is specified with `logistic_reg()`. This function, implements two hyperparameters for regularization: `penalty` and `mixture`. Logistic Regression's mode is always classification.
+
+The available engines are:
+
++ `glm` or `glmnet` from Base R.
++ `stan` uses the stan library.
++ `spark` gives you access to logistic regression on Spark.
++ `keras` gives you access to an underlying keras engine.
+
+
+```{r}
+
+
+```
+
+
+```{r}
+
+```
+
+
+As in the case of linear regression, we can extract details about the model parameters:
+
+```{r}
+
+```
+
+
+The interpretation of the parameters' standard error is similar: they measure parameter uncertainty and can be assessed or compared to the estimate itself. The p-value also has a similar interpretation.
+
+## Perfromance
+
+For the moment, we will use the default two performance measures when we compare predicted and actual classes: 
+
++ `accuracy`: the proportion of data that are predicted correctly.
++ `kap` or Kappa: a measure similar to accuracy but normalized by the accuracy that would be expected by chance alone. This is useful when we observe class imbalance. Class imbalance occurs when we see one or more majority classes and a small but important minority class. We typically care about the minority class.
+
+```{r}
+
+```
+
+We get a high accuracy score. However, notice that about 3% of the observations are defaults. Does this performance measure tell us something interesting about our model? What does a Kappa of around 40% mean?
+
+
+## Multiple Logistic Regression
+
+Our data contains more than one predictor that we can use.
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+Income does not appear to be a significant predictor. Let's try removing it.
+
+```{r}
+
+```
+
+We calculate performance metrics.
+
+```{r}
+
+```
+
+# Linear Discriminant Analysis
+
+Some alternative models are parametric and simple, resulting in linear decision boundaries. One of them is Linear Discriminant Analysis (LDA). In this case, we model the distribution of the predictors X separately in each response class (Y) and then use Bayes' Theorem to convert them to P(Y=k|X).  
+
+We won't discuss the method in depth, but consider that Bayes' Theorem is one of the fundamental results in statistics, ML, and many other areas of knowledge. This Theorem allows us to update our beliefs about the world, when we observe data:
+
+$$
+P(Y|X) = \frac{P(Y, X)}{P(X)}
+$$
+
+There are several reasons to use LDA instead of Logistic Regression (James et al., 2013):
+
++ When the classes are well-separated, the parameters from logistic regression tend to be unstable. LDA does not suffer from this problem.
++ If n is small and the distribution of predictors X is approximately normal, the LDA model is more stable than logistic regression.
++ The method can jointly predict several classes. 
++ The method is analytical and produces results with speed.
+
+## Implementation
+
+In tidymodels, LDA is implemented in `discrim_linear()`. It implements one hyperparameter, `penalty`, which is a non-negative number representing the amount of regularization used by some engines.
+
+Two engines can be used: `"MASS"` (the default) or `mda`.
+
+The tidymodels group of libraries are fairly recent, but have been built on long-standing libraries. The library `discrim` that contains LDA is distributed through a public repository on github. To install it do the following:
+
+
++ Save your work and restart RStudio. 
++ Install devtools: if you have not done so before, run `install.packages('devtools')` in the console.
++ Install Rtools40:
+  * If you are using Windows, follow these instructions to install Rtools40: [Rtools40 at CRAN](https://cran.r-project.org/bin/windows/Rtools/). 
+  * This step is not required for Mac users and you can skip it. You can read more here: [Mac OS and Rtools40](https://cran.r-project.org/bin/macosx/tools/).
++ Install discrim: run `devtools::install_github("tidymodels/discrim")` in the console. 
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+# Confusion Matrix
+
+A different way of looking at the errors is through a confusion matrix. This view allows us to analyze the types of errors that our classifier is making.
+
+The confusion matrix shows correctly predicted observations and false positives (predicted Yes, but really No default) and false negatives (predicted No, but really Yes).
+
+
+```{r}
+
+```
+
+We now see that this classifier is behaving differently per class. In the case of defaults, it correctly classified only 22 out of 76 defaulted cases. In the minority class (default) this model has a 71% error on the validation set. On the other hand, in the majority (non-default) class, performance is 99.7%.
+
+This is unacceptable because from a business perspective, we care about the defaulted cases. For this type of discussion, we use the following terms:
+
+* *Sensitivity* is the percentage of true positive cases (true defaults) that are identified. In our case, this is 22/76 or 28.9%.
+* *Specificity* is the percentage of true negatives (true non-defaulters) that are correctly identified. In our example, it is 2018/2024 or 99.7%
+
+This is a property of LDA: it will try to minimize the overall error, without considering class imbalance.
+
+
+# k-Nearest Neighbours
+
+As in the case of regression, we can also implement a k-Nearest Neighbours classifier. 
+
+The mechanics are generally similar. The model takes a hyperparameter (k) that defines a boundary or neighbourhood. The predicted class of a given observation is the majority class in that neighbourhood. For instance, if an observation is "surrounded" by defaulted nieghbours, it will be predicted as default.
+
+```{r}
+
+
+```
+
+We measure the k-NN model's performance under the training and validation set.
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+# Final Thoughts
+
+We have seen three classification methods and initial applications of recipes. At this point, we are left with more questions than answers, but with a path that will direct further modules:
+
++ We continue working with linear models and k-NN. We may benefit from having more flexible methods.
++ We need techniques to address class imbalance, including appropriate performance measures and a way to enhance our classifiers' performance.
++ Although R and the tidyverse provide useful functions to manipulate data, we are approaching a point where it is too cumbersome to experiment and maintain results by hand.  
