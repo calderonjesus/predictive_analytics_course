@@ -1,0 +1,502 @@
+---
+title: "A02 - Predicting Sales based on Advertising"
+output: 
+  html_document:
+    theme: flatly
+    toc: FALSE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Instructions
+
+In this assignment, we will explore a few models to predict sales from the Advertising data set. The Advertising data set contains an index (imported as `X1`) and four variables: sales (thousands of units), TV, radio, and newspaper (yearly expense of each in thousands of dollars). We will train, validate, and test a few models that we have seen in class for us to select the best performing model. We will apply the models that we saw in the course notes and video lectures to create training and test sets from our data from the required reading material. 
+
+The problem setting as described by James et al. (2013) is:
+
+> The Advertising data set consists of the sales of that product in 200 different markets, along with advertising budgets for the product in each of those markets for three different media: TV, radio, and newspaper. [...] It is not possible for our client to directly increase sales of the product. On the other hand, they can control the advertising expenditure in each of the three media. Therefore, if we determine that there is an association between advertising and sales, then we can instruct our client to adjust advertising budgets, thereby indirectly increasing sales. In other words, our goal is to develop an accurate model that can be used to predict sales on the basis of the three media budgets.
+
+The objective is to select the best predictor of sales based on other variables.
+
+## Submission and Formatting
+
+  + Submit both, Rmd and HTML files.
+  + Show your code (set `ECHO=TRUE`), but feel free to silence messages (`message=FALSE`).
+  + Please, format your code: readability is essential.
+  + In the measure possible, try to structure your report as a document meant to be read from beginning to end. Explain the steps of your process and the success or failure of the experiment. 
+  + Craft your report as a document to read from beginning to end and not as a question/answer format. You are free to use free text, bullet points, or a combination.  Also, lead your sections with text and not with code, charts or tables; this makes your submission more readable. 
+  + The report does not need to be narrative, but it must be clear. Mainly, be explicit about your modelling choices. 
+  + Format counts: personalize and format your submission as you see fit in terms of Rmarkdown elements, including a floating table of contents, themes for ggplot. Make sure to use semantic tags correctly for section and subsection titles. Overall, try to make your document more understandable with better formatting. 
+
+## Structure of the Report
+  
+  + The report should generally have the following structure:
+    - Introduction
+      * Exploratory Data Analysis
+      * Data Splitting Strategy
+      * Performance Metric
+    - k-NN
+      * Training Results
+      * Validation Results
+    - Linear regression
+      * Training Results
+      * Validation Results
+    - Model Selection and Testing
+    - Conclusion
+  + Feel free to add subsections within the top-level sections.
+  + Please, remove these instructions from the submission.
+  + Notice that the examples use a different set of random seeds than the ones in the instructions. Your results will be different, and you will most likely not precisely match the same results as shown below.
+  
+# Introduction
+
+  + Describe the data set and the objective of the model: what is it predicting? What would management like to obtain?.
+  + Describe the dataset, its variables, number of observations. Do this briefly.
+  + Briefly describe the procedures that you will perform.
+  + Delineate your conclusions.
+
+## Exploratory data analysis
+
+  - Display a scatter plot matrix. Remember not to include X1.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(GGally)
+library(knitr)
+```
+
+> **Guidance:** the variable below could be X1,  ...1, or another name.
+
+```{r, echo = TRUE}
+ad_dt <- read_csv('./data/Advertising.csv') %>%
+  select(-...1)
+```
+
+```{r ggpairs}
+ad_dt %>%
+  ggpairs() + 
+  labs(title = 'Exploratory Data Analysis', 
+       subtitle = 'sales ~ f(TV, radio, newspaper)') +
+  theme_minimal()
+```
+
+  - Comment on correlations, density plots ("smooth histograms"), and scatter plots, as you find interesting. Remember to highlight a few things:
+  
+    * Concentrations and distributions of each variable.
+    * Correlation is strong at 1 or -1 and weak around 0; highlight the features of the correlations in this data set.
+    * Noticeable relationships between variables observed in scatter plots.
+
+> **Guidance:** Commentary is important, but this does not necessarily mean wordy. Look for interesting insights around high correlations, interesting shapes in the distribution of variables shown along the diagonal of the plot matrix, or relationships between variables.
+
+## Splitting our Data
+
+  + As an introduction to this part of the report, explain to your reader why it is essential to split data between training and testing. 
+  + Also, include a few lines on why you will be using a *validation set*.
+  + In this section, we will split our data into three subsets: test, validation, and training sets.
+  
+![A depiction of our data spending strategy ([tidymodels.org](https://www.tidymodels.org/start/case-study/))](./img/data_diagram.png)
+
+  + Split the data between testing and non-testing: 
+  
+    - Use the command `set.seed(123)` to make your results replicable. The examples below use a different seed, so you will not precisely match them and may be prone to sample bias.
+    - Use `initial_split()`, set the proportion (`prop`), and stratification as required.
+    - Use `training()` and `testing()` to get `other_dt` and `test_dt`, respectively.
+  + Apply `set.seed(456)` to make your results replicable. As above, the examples are based on a different seed.
+  + Split `other_dt` using `initial_split()` once again:
+  
+      - Use `initial_split()`, set the proportion (`prop`), and stratification as required. 
+    - Use `training()` and `testing()` to get `train_dt` and `val_dt`, respectively.
+
+  + In both splits, set `prop=0.7` and `strata=sales`. Please explain what these function arguments mean. 
+
+> **Guidance:** the command `set.seed()` should be applied twice. This is important so that we can replicate results. 
+>
+> Each split must be 70/30 (`prop`) and stratified (`strata`) based on sales. From [tidymodel's documentation](https://rsample.tidymodels.org/reference/initial_split.html):
+>
+> + `prop`: The proportion of data to be retained for modeling/analysis.
+> + `strata`: A variable that is used to conduct stratified sampling to create the resamples.
+>
+> The objective is to ensure that the distribution of the stratification variable (the strata) is reflected in the resulting subsamples. 
+
+```{r}
+set.seed(123)
+ad_split <- initial_split(ad_dt, 
+                          prop = 0.7, 
+                          strata=sales)
+other_dt <- training(ad_split)
+test_dt <- testing(ad_split)
+
+set.seed(456)
+val_split <- initial_split(other_dt, 
+                       strata = sales, 
+                       prop = 0.7)
+train_dt <- training(val_split)
+val_dt <- testing(val_split)
+```
+
+## Performance Metric
+
+  * Based on the standard `metrics()`:
+    - `rmse`: Root mean squared error.
+    - `mae`: mean absolute error.
+    - `rsq`: r-squared.
+  * Choose a performance measure to optimize the learning process and make choices below. Explain why you chose this performance measure.
+  * Keep the additional measures to help you guide model selection.
+
+> **Guidance:** The objective is to optimize prediction accuracy, so any measure that is not r-squared works. Error metrics are the inverse accuracy, whereas r-squared is a measure of correlation.
+
+# k-Nearest Neighbours
+
+  + Define three k-NN models; set their engine and mode. Use 4, 8, and 12 neighbours, respectively.
+
+```{r }
+knn_mod_4 <- 
+  nearest_neighbor(neighbors = 4) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+knn_mod_8 <- 
+  nearest_neighbor(neighbors = 8) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+knn_mod_12 <- 
+  nearest_neighbor(neighbors = 12) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+```
+
+  + Train the models on `train_dt`.
+
+> **Guidance:** verify that `data = train_dt`. 
+
+
+```{r}
+knn_fit_1 <- 
+  knn_mod_4 %>%
+  fit(sales ~ TV + radio + newspaper, data = train_dt)
+
+knn_fit_2 <- 
+  knn_mod_8 %>%
+  fit(sales ~ TV + radio + newspaper, data = train_dt)
+
+knn_fit_3 <- 
+  knn_mod_12 %>%
+  fit(sales ~ TV + radio + newspaper, data = train_dt)
+```
+
+  + Report the training metrics:
+    * Bind the predictions of each of the three models to `train_dt`. 
+    * The predictions should be calculated using `predict()`.
+    * Rename the resulting columns as you see fit.
+    * Include the standard measures `rmse`, `rsq`, and `mae`.
+    * Assuming the variable names, you can collect all values in a single tibble using the following strategy:
+      - Create a list to collect all results.
+      - Add each set of metrics to the list, indexing the list by the number of neighbours (`'4'`, `'8'`, and `'12'`). Notice the quotation marks: these labels are strings and not numbers.
+      - Apply `bind_rows()` to the list to bind the results. With `.id = k` we tell the function that the index should map to variable `k` in the data.
+    * Display the results using `pivot_wider()` on the metrics to show a more readable form.
+
+Skeleton code for this section:
+
+```{r, echo = TRUE, eval = FALSE}
+train_knn_dt <- train_dt %>%
+  bind_cols(predict(...),
+            predict(...),
+            predict(...)) %>%
+  rename(y_knn_4 = .pred...5,
+         y_knn_8 = .pred...6,
+         y_knn_12 = .pred...7)
+```      
+
+```{r, echo = TRUE, eval = FALSE}
+knn_train_list <- list()
+
+knn_train_list[['4']] <- metrics(...)
+knn_train_list[['8']] <- metrics(...)
+knn_train_list[['12']] <- metrics(...)
+
+knn_train_metrics <- bind_rows(knn_train_list, .id = 'k') %>%
+  mutate(error_type = 'training')
+
+knn_train_metrics %>%
+  pivot_wider(names_from = '.metric', 
+              values_from = '.estimate') %>%
+  kable(digits = 4, 
+        caption = 'k-NN Training Error')
+
+```
+
+> **Guidance** Actual code.
+    
+```{r}
+train_knn_dt <- train_dt %>%
+  bind_cols(predict(knn_fit_1, new_data = train_dt),
+            predict(knn_fit_2, new_data = train_dt),
+            predict(knn_fit_3, new_data = train_dt)) %>%
+  rename(y_knn_4 = .pred...5,
+         y_knn_8 = .pred...6,
+         y_knn_12 = .pred...7)
+```
+
+
+```{r}
+knn_train_list <- list()
+knn_train_list[['4']] <- metrics(train_knn_dt, 
+                                     truth = sales, 
+                                     estimate = y_knn_4)
+knn_train_list[['8']] <- metrics(train_knn_dt, 
+                                     truth = sales, 
+                                     estimate = y_knn_8)
+knn_train_list[['12']] <- metrics(train_knn_dt, 
+                                      truth = sales, 
+                                      estimate = y_knn_12)
+
+knn_train_metrics <- bind_rows(knn_train_list, .id = 'k') %>%
+  mutate(error_type = 'training')
+```
+
+```{r}
+knn_train_metrics %>%
+  pivot_wider(names_from = '.metric', 
+              values_from = '.estimate') %>%
+  kable(digits = 4, 
+        caption = 'k-NN Training Error')
+```
+
+
+  + Report the validation metrics (`new_data=val_dt`).
+    * Construct a data set by binding three columns to the validation set, `val_dt`. 
+    * Each column should contain the prediction using `val_dt` as the new data set.
+    * Rename columns as you see fit.
+    * Follow a similar strategy as above to collect your results. You will 
+
+> **Guidanace** Notice that the model is not re-trained, what changes is that `new_data` is now the validation set.
+
+```{r}
+val_knn_dt <- val_dt %>%
+  bind_cols(predict(knn_fit_1, new_data = val_dt),
+            predict(knn_fit_2, new_data = val_dt),
+            predict(knn_fit_3, new_data = val_dt)) %>%
+  rename(y_knn_4 = .pred...5,
+         y_knn_8 = .pred...6,
+         y_knn_12 = .pred...7)
+```
+
+
+> **Guidance** Similar to the procedure above.
+
+```{r}
+knn_val_list <- list()
+knn_val_list[['4']] <- metrics(val_knn_dt, 
+                                     truth = sales, 
+                                     estimate = y_knn_4)
+knn_val_list[['8']] <- metrics(val_knn_dt, 
+                                     truth = sales, 
+                                     estimate = y_knn_8)
+knn_val_list[['12']] <- metrics(val_knn_dt, 
+                                      truth = sales, 
+                                      estimate = y_knn_12)
+
+knn_val_metrics <- bind_rows(knn_val_list, .id = 'k') %>%
+  mutate(error_type = 'validation')
+
+knn_val_metrics %>%
+  pivot_wider(names_from = '.metric', 
+              values_from = '.estimate') %>%
+  kable(digits = 4, 
+        caption = 'k-NN Validation Error')
+```
+
+## Plot results
+
++ Build a single metrics tibble:
+  - Bind rows of the training and testing tibbles.
+  - Mutate the tibble by adding a variable, `neighbours` or equivalent, that is, a transformation of `k` into a number (`parse_number(k)`)
++ Plot the results by mapping x to `neighbours`, y to `.estimate`, colour to `error_type`, and faceting by wrapping `.metric`. Remember to format the plot with labels and titles.
+
+```{r, echo = TRUE, eval = FALSE}
+knn_metrics <- bind_rows(...) %>%
+  mutate(neighbours = parse_number(k))
+```
+
+
+```{r}
+knn_metrics <- bind_rows(knn_train_metrics, knn_val_metrics) %>%
+  mutate(neighbours = parse_number(k))
+```
+
+
+```{r}
+knn_metrics %>%
+  ggplot(aes(x = neighbours, y = .estimate, colour = error_type)) +
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  geom_point() +
+  geom_line() +
+  theme_minimal() +
+  scale_colour_brewer(type = 'qual', palette = 2) +
+  labs(title = 'k-NN Models',
+       subtitle = 'Performance tuning',
+       y = 'Estimate',
+       x = 'Neighbours (k)')
+```
+
+
++ Comment the following:
+
+  * Based on the performance measure that you selected, which model has the best training performance? Validation performance?
+  * Which model would you select out of these three candidates? Why?
+  
+> **Guidance** Model selection should be based on validation metrics. Validation estimates are better estimates of test performance metrics.
+
+# Linear regression
+
+  + Define a linear regression model; set the engine to `"lm"`.
+  
+```{r}
+ln_mod <- 
+  linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+```
+
+  + Train the model on `train_dt`.
+  + Print and comment on estimates, estimators' standard error, and p-value. Consider a significance of 1%. Do all estimators appear to be significant?
+
+```{r}
+ln_fit <- 
+  ln_mod %>%
+  fit(sales ~ TV + radio + newspaper, data = train_dt)
+
+tidy(ln_fit) %>%
+  kable(digits = 4, caption = 'Estimates for 3-variable model')
+```
+
+  + Using the same linear model object, define another model without the predictor identified above. 
+  
+```{r linreg_val_2}
+ln_fit_2 <- 
+  ln_mod %>%
+  fit(sales ~ TV + radio, data = train_dt)
+
+tidy(ln_fit_2) %>%
+  kable(digits = 4, caption = 'Estimates for 2-variable model')
+```
+  + Calculate the training performance metrics of each model above as in previous cases.
+  
+```{r }
+train_ln_dt <- train_dt %>%
+  bind_cols(predict(ln_fit, new_data = train_dt),
+            predict(ln_fit_2, new_data = train_dt)) %>%
+  rename(y_ln_1 = .pred...5,
+         y_ln_2 = .pred...6)
+```
+
+```{r}
+ln_train_list <- list()
+
+ln_train_list[['3-variable']] <- metrics(train_ln_dt, 
+                                         truth = sales, 
+                                         estimate = y_ln_1)
+ln_train_list[['2-variable']] <- metrics(train_ln_dt, 
+                                         truth = sales, 
+                                         estimate = y_ln_2)
+
+ln_train_metrics <- bind_rows(ln_train_list, .id = 'predictors')
+```
+
+
+```{r}
+ln_train_metrics %>%
+  pivot_wider(names_from = '.metric', 
+              values_from = '.estimate') %>%
+  kable(digits = 4, caption = 'Linear regression training results')
+```
+
+  + Calculate the validation metrics of each model above.
+  
+    ```{r ln_val_metrics}
+val_ln_dt <- val_dt %>%
+  bind_cols(predict(ln_fit, new_data = val_dt),
+            predict(ln_fit_2, new_data = val_dt)) %>%
+  rename(y_ln_1 = .pred...5,
+         y_ln_2 = .pred...6)
+```
+
+```{r}
+ln_val_list <- list()
+
+ln_val_list[['3-variable']] <- metrics(val_ln_dt, 
+                                         truth = sales, 
+                                         estimate = y_ln_1)
+ln_val_list[['2-variable']] <- metrics(val_ln_dt, 
+                                         truth = sales, 
+                                         estimate = y_ln_2)
+
+ln_val_metrics <- bind_rows(ln_val_list, .id = 'predictors')
+```
+
+
+```{r}
+ln_val_metrics %>%
+  pivot_wider(names_from = '.metric', 
+              values_from = '.estimate') %>%
+    kable(digits = 4, caption = 'Linear regression validation results')
+```
+  + Please comment:
+    
+    * Based on the model performance measure that you chose, which model outperforms?
+    * Which model would you select? Why?
+    
+> **Guidance** Model selection should be based on validation metrics. Validation estimates are better estimates of test performance metrics.
+
+# Selection and Testing
+
+  + In the sections above, you selected one k-NN and one linear regression model.
+  + Select one model that you will recommend using. 
+  + Train the top-performing model using  `other_dt`, i.e., the joint training and validation set.
+
+> **Guidance** Model selection should be based on validation metrics. Validation estimates are better estimates of test performance metrics.
+
+```{r}
+top_knn_fit <-
+  knn_mod_4 %>%
+  fit(sales ~ TV + radio + newspaper, data = other_dt)
+```
+
+  + Test each model using the testing set, `test_dt`:
+    * Bind the prediction results to the test set.
+    * Calculate the models' test performance measures.
+    
+```{r}
+test_res_dt <- test_dt %>%
+  bind_cols(predict(top_knn_fit, new_data = test_dt))
+```
+
+```{r}
+metrics(test_res_dt, truth = sales, estimate = .pred) %>%
+  kable(digits = 4, caption = 'Test Results, k-NN using 4 neighbours')
+```
+
+# Conclusion
+
+  * Which model, k-NN or linear regression, would you select as your final recommendation? Why? Would you change your choice under different circumstances?
+  * Compare the estimates based on training, validation, and a test set of your chosen metric. Out of training and validation metrics, which one was more optimistic?
+  * Comment on why a validation set is essential. As well, discuss the drawbacks of using a single validation set and what technique can address these drawbacks and constitute a further enhancement.
+  
+> **Guidance** 
+>
+> + Model selection should be based on validation metrics. Validation estimates are better estimates of test performance metrics.
+> + One can switch to a linear regression if model explainability were of importance.
+* Training estimates will tend to be more optimistic.
+* One important objective is to find a model that performnce well in samples that were not part of its training set. Using a validation set allows us to measure the performance under these conditions.  The drawback is that we can overfit our validation set and a technique to overcome this drawback is called Cross-Validation.
+    
+# References
+
++ James, G. , D. Witten, T. Hastie, and R. Tibshirani (2013). *An Introduction to Statistical Learning with Applications in R*. New York: Springer. Available at: [https://www.statlearning.com/](https://www.statlearning.com/)
++ tidymodels.org. A predictive modelling case study. Available at: [https://www.tidymodels.org/start/case-study/](https://www.tidymodels.org/start/case-study/)
+
+
+  

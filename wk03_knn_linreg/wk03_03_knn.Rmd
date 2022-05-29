@@ -1,0 +1,254 @@
+---
+title: "k-Nearest Neighbours Models"
+subtitle: "Part 3"
+author: "Jesús Calderón"
+date: "Spring 2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+```
+
+
+
+# k-Nearest Neighbors
+
+We discussed earlier linear regression models as an example of a parametric approach. It assumes a functional form for *f(X)*. Some advantages of parametric techniques:
+
++ Easy to fit because we only estimate a few parameters.
++ In linear regression, the coefficients have simple interpretations, and statistical significance tests are easy to perform.
+
+However, parametric methods have important disadvantages:
+
++ By construction, they make strong assumptions about *f(x)*.
++ If the function generating our data in the real world is far from linear, then these linear regression methods may not perform well.
+
+In contrast, non-parametric methods do not make strong assumptions about *f(X)* and provide an alternative, more flexible approach.
+
+## Method
+
+The k-Nearest Neighbor regression model (model type is k-NN, the mode is regression) is simple:
+
++ Identify the K training observations closest to the *x* that we want to predict to define a neighbourhood, N. 
++ Use the average of the training responses in N to predict:
+
+$$
+\hat{f}(x_{0})=\frac{1}{n}\sum_{x_{i}\in N}y_{i}.
+$$
+
+## Examples
+
+Let's start with our simple examples of linear and non-linear functions plus noise.
+
+
+### Linear
+
+```{r libraries_data, echo = FALSE}
+library(tidyverse)
+library(tidymodels)
+```
+
+
+```{r linear_fun}
+linear_dt <- tibble(
+  x = seq(-1, 1, 0.01), 
+  f = 1 + 5 * x,
+  y = f + rnorm(201)
+)
+
+linear_dt %>%
+  ggplot(aes(x = x)) + 
+  geom_line(aes(y = f), color = 'steelblue') + 
+  geom_point(aes(y = y), color = 'tomato')  +
+  labs(title = 'A Simple Example', 
+       subtitle = 'Linear Underlying Function and Synthetic Data', 
+       x = 'x', y = 'y') + 
+  theme_minimal()
+```
+
+
+A model of type nearest neighbour is instantiated with `nearest_neighbor()`. This function takes the following arguments:
+
++ `mode`: A single character string for the type of model. Possible values for this model are "unknown", "regression", or "classification".
++ `neighbors`: A single integer for the number of neighbors to consider (often called k). For kknn, a value of 5 is used if neighbors is not specified.
++ `weight_func`: A single character for the type of kernel function used to weight distances between samples. Valid choices are: "rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", "inv", "gaussian", "rank", or "optimal".
++ `dist_power`: A single number for the parameter used in calculating Minkowski distance.
+
+Most of these arguments are *hyperparameters*, a concept that we will discuss later in these notes. The documentation also only specifies a single engine `"kknn"`, which is not unexpected given the model's simplicity.
+
+```{r knn}
+knn_mod_1 <- 
+  nearest_neighbor(neighbors = 1) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+
+knn_mod_9 <- 
+  nearest_neighbor(neighbors = 9) %>%
+  set_engine("kknn") %>%
+  set_mode("regression")
+```
+
+## Linear Synthetic Data
+
+We fit our simple example data. 
+
+```{r knn_fit_linear}
+knn_1_fit <- 
+  knn_mod_1 %>%
+  fit(y ~ x, data = linear_dt)
+knn_1_fit
+```
+
+```{r knn_9_fit_linear}
+knn_9_fit <- 
+  knn_mod_9 %>%
+  fit(y ~ x, data = linear_dt)
+```
+
+ 
+```{r get_predictions}
+linear_dt <- linear_dt %>%
+  bind_cols(predict(knn_1_fit, new_data = linear_dt)) %>%
+  rename(y_1nn = .pred) %>%
+  bind_cols(predict(knn_9_fit, new_data = linear_dt)) %>%
+  rename(y_9nn = .pred)
+
+linear_dt %>%
+  ggplot(aes(x = x)) +
+  geom_point(aes(y = y, color = 'Synth data')) + 
+  geom_line(aes(y = f, color = 'Underlying f(x)')) + 
+  geom_line(aes(y = y_1nn, color = '1-NN')) +
+  geom_line(aes(y = y_9nn, color = '9-NN')) +
+  scale_color_brewer(palette = 3, type = 'qual') + 
+  labs(title = 'k-Nearest Neighbours (k-NN) Model',
+       x = 'x', y = 'y') +
+  theme_minimal()
+```
+
+When k = 1 neighbour, notice how the model overfits the data. However, when we use more neighbours (k = 9), we get a smoother line.
+
+We can display each model's performance metrics:
+
+```{r metrics}
+metrics(linear_dt, truth = y, estimate = y_1nn)
+```
+
+With k = 1, the model fits the data perfectly. Remembering that this is the training (and only) set, this may not come as a surprise. The model is predicting what it already knows.
+
+
+```{r metrics_9nn}
+metrics(linear_dt, truth = y, estimate = y_9nn)
+```
+
+With a larger number of neighbors, we get a smoother fit, with RMSE close to 1 and high R-squared value. (We still have not formally discussed performance measurement. The performance calculation below states that the "new data" is the training data that should give away that we will perform additional calculations.)
+
+
+
+
+## Nonlinear Synthetic Data
+
+Now, under our non-linear data.
+
+```{r nonlinear}
+nonlinear_dt <- tibble(
+  x = seq(-1, 1, 0.01), 
+  f = 6*x^5 - 4*x^3 - 2*x^2 + x + 1,
+  y = f + rnorm(201)
+)
+```
+
+Fit the models on the non-linear data.
+
+```{r fit_models}
+knn_non_1 <- 
+  knn_mod_1 %>%
+  fit(y ~ x, data = nonlinear_dt)
+
+knn_non_9 <- 
+  knn_mod_9 %>%
+  fit(y ~ x, data = nonlinear_dt)
+```
+
+Bind the predictions to the data for plotting.
+
+```{r model predictions}
+nonlinear_dt <- nonlinear_dt %>%
+  bind_cols(predict(knn_non_1, new_data = nonlinear_dt)) %>%
+  rename(y_1nn = .pred) %>%
+  bind_cols(predict(knn_non_9, new_data = nonlinear_dt)) %>%
+  rename(y_9nn = .pred)
+```
+
+```{r plot_model predictions}
+nonlinear_dt %>%
+  ggplot(aes(x = x)) +
+  geom_point(aes(y = y, color = 'Synth data')) + 
+  geom_line(aes(y = f, color = 'Underlying f(x)')) + 
+  geom_line(aes(y = y_1nn, color = '1-NN')) +
+  geom_line(aes(y = y_9nn, color = '9-NN')) +
+  scale_color_brewer(palette = 3, type = 'qual') + 
+  labs(title = 'k-Nearest Neighbours (k-NN) Model',
+       subtitle = 'Non-linear underlying function',
+       x = 'x', y = 'y') +
+  theme_minimal()
+```
+
+```{r knn_1_print}
+metrics(nonlinear_dt, truth = y, estimate = y_1nn)
+```
+```{r knn_9_print}
+metrics(nonlinear_dt, truth = y, estimate = y_9nn)
+```
+
+# Ad and Sales Data
+
+```{r load_data}
+ad_dt <- read_csv('./data/Advertising.csv')
+```
+```{r fit_knn_1_ad}
+knn_1_ad <- 
+  knn_mod_1 %>%
+  fit(sales ~ TV + radio + newspaper, data = ad_dt)
+knn_9_ad <- 
+  knn_mod_9 %>%
+  fit(sales ~ TV + radio + newspaper, data = ad_dt)
+```
+
+# Measure Training Performance
+
+
+
+```{r measure_training_performance}
+ad_dt <- ad_dt %>%
+  bind_cols(predict(knn_1_ad, new_data = ad_dt), 
+            predict(knn_9_ad, new_data = ad_dt)) %>%
+  rename(y_knn_1 = .pred...6, y_knn_9 = .pred...7)
+```
+
+Below we see that the k-NN model when k = 1 fits the training data perfectly. 
+
+```{r metrics_knn_1_ad}
+metrics(ad_dt, truth = sales, estimate = y_knn_1)
+```
+
+```{r metrics_9nn_ad}
+metrics(ad_dt, truth = sales, estimate = y_knn_9)
+```
+
+But wait. Are we doing this the right way?
+
+All of the performance metrics that we calculated are on a single data set, the training set. We need to measure performance on generalization, and training performance will not get us far in that direction.
+
+
+# Common methods of splitting data
+
+As you have read this week, the most straightforward approach is to split the data into two sets: the training and test sets.
+
+The training set contains a majority of data. It is a sandbox for modelling, where one tests different models and experiments with features. Most of the time, we work with the training set. 
+
+The test set is used only once or twice for final arbitration. If we were to use the test set more than once, we would contaminate the modelling process and risk overfitting the test set.

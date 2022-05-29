@@ -1,0 +1,206 @@
+---
+title: "Linear Regression, K-NN, and How to Spend Your Data"
+subtitle: "Part 1"
+author: "Jesús Calderón"
+date: "Spring 2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+```
+
+# Learning Objectives
+
+By the end of this week, students will be able to:
+
++ Explain the k-Nearest Neighbor model. Implement this model by training and testing it on a data set.
++ Explain a simple and multiple linear regression model. Implement this model by training and testing it on a data set.
++ Explain and implement in R the split between training and testing data sets. Discuss the use of validation set and opine if it should be considered 
+
+# Introduction: Advertising Data
+
+Consider the data in *Advertising.csv* [(download it at statlearning.com)](https://www.statlearning.com/s/Advertising.csv):
+
++ 200 observations
++ Five variables about ad spending and sales:
+      
+```{r libraries_data}
+library(tidyverse)
+library(tidymodels)
+
+ad_dt <- read_csv('./data/Advertising.csv') %>%
+  select(-X1)
+```
+      
+
+      
+```{r glimpse}
+glimpse(ad_dt)
+```
+
+About this data, James et al. (2013) say:
+
+> The Advertising data set consists of the sales of that product in 200 different markets, along with advertising budgets for the product in each of those markets for three different media: TV, radio, and newspaper. [...] It is not possible for our client to directly increase sales of the product. On the other hand, they can control the advertising expenditure in each of the three media. Therefore, if we determine that there is an association between advertising and sales, then we can instruct our client to adjust advertising budgets, thereby indirectly increasing sales. In other words, our goal is to develop an accurate model that can be used to predict sales on the basis of the three media budgets.
+
+# Exploratory Data Analysis
+
+## Variable Distributions
+
+From this week's reading, chapter 4 (Khun and Silge, 2021).
+
+> Are there any odd or noticeable things about the distributions of the individual predictors? Is there much skewness or any pathological distributions?
+
+
+```{r var_dist}
+
+long_ad_dt <- ad_dt %>%
+  pivot_longer(c(TV, radio, newspaper, sales), 
+              names_to = 'variable',
+              values_to = 'value')
+
+long_ad_dt %>%
+  ggplot(aes(x = value)) + 
+  geom_histogram(bins=50) + 
+  facet_wrap(~variable, scales = 'free') + 
+  labs(title='Variable distributions',
+       subtitle = 'EDA',
+       x = '', y = 'Frequency') +
+  theme_minimal()
+```
+
+
+```{r boxplots}
+long_ad_dt %>%
+  ggplot(aes(x = variable, y = value)) + 
+  geom_boxplot() +
+  labs(title = 'Distribution of variables', 
+       subtitle = 'EDA', 
+       x='', y = 'Value') +
+  theme_minimal()
+```
+
+
+## Matrix of Plots
+
+From this week's reading, chapter 4 (Khun and Silge, 2021).
+
+>+ Are there high correlations between predictors? For example, there are multiple predictors related to the size of the house. Are some redundant?
+>
+>+ Are there associations between predictors and the outcomes?
+
+We will use a new package, which is an extension of the tidyverse. The package is `GGally `. Before the first time you use the package, use `install.packages('GGally')` in the console. You can find more information about the package `GGally` in this [vignette](https://unc-libraries-data.github.io/R-Open-Labs/Extras/ggally/ggally.html).
+
+```{r pivot_longer}
+library(GGally)
+ad_dt %>%
+  ggpairs() +
+  theme_minimal()
+```
+
+## Questions
+
+A few questions arise (James et al., 2013):
+
++ Is there a relationship between advertising budget and sales? There is no sense in pursuing an analysis of ad expenditure vs sales if there is an only weak indication that ads influence sales.
++ How strong is the relationship between advertising budget and sales? Given a specific ad budget, can we predict sales with high accuracy (strong relationship) or is it only slightly better than a random guess (weak relationship)?
++ Which media contribute to sales? Do all three media contribute equally, or do just one or two of the media contribute? To answer this question, we need to separate the effects of each variable on sales.
++ How accurately can we estimate the effect of each medium on sales?
++ How accurately can we predict future sales?
++ Is the relationship linear?
++ Is there synergy among the advertising media?
+
+# Build a Model
+
+Of course, the answer to these questions has to do with models. In this section, we discuss an abridged version of how to build a model. 
+
+We start with an idea of the structure that we would like to discover. We believe that `sales` may be a function of `TV`, `radio`, and `newspaper`. We would like to test this idea. 
+
+In R, we can express the idea that '`sales` is a function of `TV`, `radio`, and `newspaper`' with a simple syntax:
+
+```{r formula, eval = FALSE}
+sales ~ TV + radio + newspaper
+```
+
+The tilde (`~`) indicates a functional relationship and the statement above is one out of several possible combinations that we will encounter during the course. The `+` symbol does not indicate an actual summation, but rather it indicates that the there are several *predictors* and that we are interested in the independent effects of each. The `*` symbol also has a different meaning in formula notation.
+
+Before proceeding, it helps to remember a few things about models in `parsnip`, the library of `tidymodels` in charge of managing model objects ([tidymodels.org](https://www.tidymodels.org/learn/develop/models/)):
+
+>+ The model *type* is related to the structural aspect of the model. For example, the model type `linear_reg` represents linear models (slopes and intercepts) that model a numeric outcome. Other model types in the package are nearest_neighbor, decision_tree, and so on.
+>
+> + Within a model type is the mode, related to the modeling goal. Currently the two modes in the package are *regression* and *classification*. Some models have methods for both models (e.g. nearest neighbors) while others have only a single mode (e.g. logistic regression).
+>
+> + The computation engine is a combination of the estimation method and the implementation. For example, for linear regression, one engine is `"lm"` which uses ordinary least squares analysis via the `lm()` function. Another engine is `"stan"` which uses the Stan infrastructure to estimate parameters using Bayes rule.
+
+## Specify the Type of Relationship
+
+In `parsnip`, the library of `tidymodels` in charge of defining models, we start by choosing the functional relationship of our model. In this case, we want a linear regression model, which is specified with:
+
+```{r linear_reg}
+linear_reg()
+```
+
+## Specifying the Computational Engine
+
+Models are not universal mathematical constructs, they are based on a varying set of assumptions and implemented with different numerical optimization techniques. When we talk of models, many times we are talking about a specific software implementation of a model. 
+
+In this case after we chose the type of model, we need to select the engine that implements the model. An *engine* is the actual mathematical model materialized in a specific software implementation that performs calculations on data. 
+
+```{r linear_reg_eng}
+linear_reg() %>%
+  set_engine('lm')
+```
+
+The engine `lm` is the standard linear models function in base R. The [documentation for `linear_reg()`](https://parsnip.tidymodels.org/reference/linear_reg.html) shows other possible engines.
+
+In summary, our model is assigned to `lm_mod` with:
+
+```{r lm_mod}
+lm_mod <- 
+  linear_reg() %>%
+  set_engine("lm")
+```
+
+## Fit the Model the Wrong Way
+
+At this point, we can "fit" the model to some data. 
+
+We take our model, which is a linear regression. We use the `lm` engine and fit our idea that "sales are predicted by TV, radio, and newspaper ads," written as `sales ~ TV + radio + newspaper` using some data (`ad_dt`).
+
+```{r}
+lm_fit <- 
+  lm_mod %>%
+  fit(sales ~ TV + radio + newspaper, data = ad_dt)
+lm_fit
+```
+
+A description of the model parameters estimates and their statistical properties can be obtained with:
+
+```{r tidy_lm_fit}
+tidy(lm_fit)
+```
+
+In this section: 
+
++ We obtained some data and explored it.
++ We selected a model type and a computational engine to build a model.
++ We then put together data with the model through a process that is called *fitting* a model. This process optimizes the *parameters* that produce the best fit of the model to our data and that are based on a set of *hyper-parameters* such as `penalty` and `mixture`, which will allow us to achieve regularization, among other things.
+
+And we got an answer! However, 
+
++ How do we know that this is a sensible model that will generalize well into data that we have not yet seen? 
++ How can we use this information to answer our exploratory questions?
++ How can we get assurance that this is the right answer?
+
+We will answer these questions in the remainder of the lectures (and the course), and we will discover that we may have jumped to a result perhaps a little too fast.
+
+
+# References
+
++ James, Garreth, Daniela Witten, Trevor Hastie, and Robert Tibshirani. [*An Introduction to Statistical Learning with Applications in R.*](https://statlearning.com/) US: Springer, 2013.
++ Khun, Max and Julia Silge. [*Tidy Modeling with R*](https://www.tmwr.org/). Version 0.0.1.9008 (2021-01-19)
+    

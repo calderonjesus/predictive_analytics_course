@@ -1,0 +1,349 @@
+---
+title: "Linear Regression Models"
+subtitle: "Part 2"
+author: "Jesús Calderón"
+date: "Spring 2021"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+```
+
+```{r libraries_data, echo = FALSE}
+library(tidyverse)
+library(tidymodels)
+
+ad_dt <- read_csv('./data/Advertising.csv')
+```
+
+Most of the discussion below is taken from James et al. (2013). You can find many more details in Chapter 3 of that book.
+
+# Simple Linear Regression
+
+Simple linear regression models are just that: a simple way of predicting a quantitative response $Y$ based on a quantitative input $X$. This is one of the simplest types of modelling, and it assumes that the relationship is a straight line:
+
+$$
+Y \approx \beta_{0} + \beta_{1}X
+$$
+
+Where the symbol $\approx$ means "approximately equal." We say that we regress $Y$ onto or on $X$. As we have seen before, $Y$ is a response variable, while $X$ is a predictor.
+
+In these notes, we will explore linear models, including:
+
++ What makes this a linear model?
++ Why is the relationship approximate?
++ Using this model, address the following questions:
+
+  * Is there a relationship between advertising budget and sales? There is no sense in pursuing an analysis of ad expenditure vs sales if there is an only a weak indication that ads influence sales.
+  * How strong is the relationship between advertising budget and sales? Given a specific ad budget, can we predict sales with high accuracy (strong relationship) or is it only slightly better than a random guess (weak relationship)?
+  * Which media contribute to sales? Do all three media contribute equally, or do just one or two of the media contribute? To answer this question, we need to separate the effects of each variable on sales.
+  * How accurately can we estimate the effect of each medium on sales?
+  * How accurately can we predict future sales?
+  * Is the relationship linear?
+  * Is there synergy among the advertising media?
+
+# Linear Models
+
+Linear models are simple. They are based on the (very strong) assumption that the relation between the response and predictors is linear. You may recall from previous university or high school courses that the equation for a line is:
+
+$$
+y = a + b x
+$$
+
+In this case, given a value of x, we can calculate the corresponding value of y. For example, given x, a sequence of values between -1 and 1, we can calculate y when a=1 and b=5.
+
+```{r ex_linear}
+ex_dt <- tibble(x = seq(-1, 1, 0.01)) %>%
+  mutate(f = 1 + 5 * x)
+
+ex_dt %>%
+  ggplot(aes(x=x)) +
+  geom_line(aes(y = f, color = 'Underlying f(x)')) + 
+  scale_color_brewer(palette = 4, type = 'qual') + 
+  labs(title = 'A Linear Function', 
+       subtitle = 'y = a + b x',
+       x = 'x', y = 'y') + 
+  theme_minimal()
+```
+
+In our case, the model is *approximately* a linear relationship. We can illustrate this by slightly modifying our code.
+
+```{r ex_2_linear}
+n_row <- nrow(ex_dt)
+
+ex_dt <- ex_dt %>%
+  mutate(y = f + rnorm(n_row, 0, 1))
+
+ex_dt %>%
+  ggplot(aes(x=x)) +
+  geom_point(aes(y = y, color = 'Synth data')) + 
+  geom_line(aes(y = f, color = 'Underlying f(x)')) + 
+  scale_color_brewer(palette = 4, type = 'qual') + 
+  labs(title = 'A Simple Example', 
+     subtitle = 'Linear function and random noise', 
+     x = 'x', y = 'y') + 
+  theme_minimal()
+
+```
+
+## Fitting a Model
+
+In a textbook, fitting is usually done via a technique called least squares. This technique requires minimizing a measure of error. In this case, we will focus on the programming aspect of fitting a model.
+
+What we did at the end of last lecture is to *fit* a model, which is to take our data and calculate its parameters (*a* and *b* in our linear model). In this case we will use a computational engine, `"lm"` to fit the model and set the mode to regression:
+
+```{r linear model}
+lm_mod <-
+  linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+lm_mod
+```
+
+Now the object `lm_mod` contains a model type and computational engine, but the relationship between variables has not yet been specified. We can do this, directly in the fit function. Later in our course, we will explore more formal methods to set relationships and transformations for feature engineering. 
+
+```{r linear_reg}
+lm_fit <- 
+  lm_mod %>%
+  fit(y ~ x, data=ex_dt)
+lm_fit
+```
+
+```{r lm_fit_tidy}
+tidy(lm_fit)
+```
+
+We can overlay the plot of the model predictions on the same data. Now that we have a *trained* model (we have parameter estimates), we can input data and get back a result. 
+
+```{r predict_linear}
+ex_dt <- ex_dt %>%
+  bind_cols(predict(lm_fit, new_data=ex_dt)) %>%
+  rename(y_predict = .pred)
+
+ex_dt %>%
+  ggplot(aes(x=x)) +
+  geom_point(aes(y = y, color = 'Synth data')) + 
+  geom_line(aes(y = f, color = 'Underlying f(x)')) +
+  geom_line(aes(y=y_predict, color = 'Linear model')) +
+  scale_color_brewer(palette = 4, type = 'qual') + 
+  labs(title = 'A Simple Example of a Simple Model', 
+       subtitle = 'Linear function and random noise and simple linear regression', 
+       x = 'x', y = 'y') + 
+  theme_minimal()
+
+
+```
+
+## Fitting a More Complex Function
+
+The quality of the fit, of course, depends on the data. If the data is not linear, a model will probably not perform well. An example of a simple non-linear function of *x* is 
+
+$$
+6x^5-4x^3-2x^2+x+1
+$$ 
+
+```{r }
+nonlinear_dt <- tibble(x = seq(-1, 1, 0.01)) %>%
+  mutate(f = 6*x^5 - 4*x^3 - 2*x^2 + x + 1, 
+         y = f + rnorm(201))
+
+nonlinear_dt %>%
+  ggplot(aes(x=x)) +
+  geom_point(aes(y=y, color = 'Synth data')) + 
+  geom_line(aes(y=f, color = 'Underlying f(x)')) +
+  scale_color_brewer(palette = 4, type = 'qual') + 
+  labs(title = 'A More Complex Example', 
+       subtitle = 'Degree 5 Polynomial', 
+       x = 'x', y = 'y') +
+  theme_minimal()
+```
+
+This is a more challenging case. The same linear model can be fit to our new data:
+
+```{r new_linear}
+lm_fit_poly <-
+  lm_mod %>%
+  fit(y ~ x, data = nonlinear_dt)
+```
+
+
+```{r predict_non_linear}
+nonlinear_dt <- nonlinear_dt %>%
+  bind_cols(predict(lm_fit_poly, new_data=nonlinear_dt)) %>%
+  rename(y_predict = .pred)
+
+nonlinear_dt %>%
+  ggplot(aes(x=x)) +
+  geom_point(aes(y = y, color = 'Synth data')) + 
+  geom_line(aes(y = f, color = 'Underlying f(x)')) +
+  geom_line(aes(y=y_predict, color = 'Linear model')) +
+  scale_color_brewer(palette = 4, type = 'qual') + 
+  labs(title = 'A More Complex Example', 
+       subtitle = 'Linear model fit', 
+       x = 'x', y = 'y') +
+  theme_minimal()
+
+```
+
+
+# TV Advertising and Sales
+
+We can use our existing linear model to fit the TV and sales data. 
+
+```{r tv_sales}
+lm_fit_ad <- 
+  lm_mod %>%
+  fit(sales ~ TV, data = ad_dt)
+tidy(lm_fit_ad)
+```
+
+The table above provides the following information:
+
+* The column *estimate* contains the *estimates* of the parameters for the intercept (*a*) and slope of variable TV (*b*). 
+* The column *std.error* contains the standard error of each parameter. This is a measure of uncertainty in the parameter, and the comparison point is typically the parameter estimate. If a parameter's std.error/estimate is close or greater to 1, then we may need to re-examine our modelling choices (notably, the selection and form of our predictors).
+* The columns *statistic* and *p.value* are related to each parameter's *significance*. Succinctly, when the *p.value* is greater than a certain significance (typically 1% or 5%, but your choice ultimately), then we cannot reject the null hypothesis that the corresponding parameter is 0.
+
+From the table above, we observe that the coefficients are relatively large with respect to their standard errors. In turn, their t-statistics (*statistic*) is also large. Therefore, the probability of finding these estimate values if the null hypothesis that their real values is 0 were true is very low. In other words, we believe that there is a low chance that we got these results by a fluke, rather than because they are related to the population dynamics.
+
+Visually, we can show the results of our model as below.
+
+```{r}
+ad_dt <- ad_dt %>%
+  bind_cols(predict(lm_fit_ad, new_data=ad_dt)) %>%
+  rename(y_predict_sales = .pred)
+
+ad_dt %>%
+  ggplot(aes(x=TV)) +
+  geom_point(aes(y=sales, color = 'Sales (thousand units)')) +
+  geom_line(aes(y=y_predict_sales, color = 'Predicted Sales')) +
+  scale_color_brewer(palette = 2, type = 'qual') + 
+  labs(title = 'Sales and TV Ads', 
+       subtitle = 'Linear model fit', 
+       x = 'TV Ads Expense', y = 'Sales') +
+  theme_minimal()
+```
+
+So mechanistically (and from a statistics-oriented perspective) we now have a better handle of how to *fit* a model and obtain "predictions" from it. However,  the predictions as of now have been the model outputs of observations that we already know about (more on this in subsequent lectures).
+
+## Assessing the Accuracy of the Model
+
+To measure the accuracy of our model, we can use the `metrics()` function. In this case, given that we have a *regression* model, the metrics that we will obtain are:
+
+* Root mean squared error or `rmse`. Roughly speaking, this will be the average amount that the response will deviate from the regression line. In our example, we see a `rmse` of about 3.24, which means that actual sales in each observation deviate from the true regression line by approximately 3,240 units, on average. You could calculate this measure by using:
+
+$$
+rmse = \sqrt{\frac{1}{n} \sum_{n}(y_{true} - y_{pred})^2}
+$$
+
+* R-squared statistic, `rsq`, or coefficient of determination. The `rmse` provides a view on the *lack* of fit fot the model, while `rsq` provides an alternative measure of fit: it measures the *proportion* of variance of the response variable that is explained by the model. The coefficient of determination is not a measure of accuracy but rather a consistency/correlation measure. It takes values between 0 and 1, so it is easier to interpret. As well, it is independent of the scale of the response variable.
+* Mean absolute error or `mse`. This is a similar measure to `rmse` but we use absolute values instead of summing squares and then taking square root. The calculation is performed by:
+
+$$
+mae = \frac{1}{n}\sum_{n}|{y_{true}-y_{pred}|}
+$$
+
+
+```{r model_accuracy}
+metrics(data = ad_dt, truth = sales, estimate = y_predict_sales)
+```
+
+## Including More Predictors
+
+The simple regression model that we examined in the previous sections can be extended to more predictors. This way, we can handle a multidimensional problem such as the one that we have at hand. 
+
+In this section, we will work with a different model specification. We will explore if `sales` is a function of `TV`, `radio`, and `newspaper`. This is our idea:
+
+```
+sales ~ TV + radio + newspaper
+```
+
+We follow a similar procedure, remembering that we had already created a linear model using a specific computational engine.
+
+```{r multiple_reg}
+lm_fit_multi <- 
+  lm_mod %>%
+  fit(sales ~ TV + radio + newspaper, data = ad_dt)
+tidy(lm_fit_multi)
+```
+
+```{r multiple_metrics}
+ad_dt <- ad_dt %>%
+  bind_cols(predict(lm_fit_multi, new_data=ad_dt)) %>%
+  rename(y_predict = .pred)
+
+metrics(data = ad_dt, truth = sales, estimate = y_predict)
+```
+
+At this point, it makes sense to address some of our research questions.
+
+# Is There a Relationship Between the Response and Predictors?
+
+The first question is to examine if this model (sales as a function of TV, radio and newspaper) makes sense. We could ask: are the coefficients of the model different from zero? The answer is found in the regression model's F-statistic which tests the null hypothesis:
+
+$$
+H_{0}: \beta_{1} = \beta_{2} = ... = \beta_{m} = 0
+$$
+The alternative would be:
+
+$$
+H_{a}: \beta_{i} \ne 0
+$$
+for at least one *i*.
+
+The F-statistic can be found by using:
+
+```{r}
+summary(lm_fit_multi$fit)
+```
+
+From the results' last line, we see that the value is much greater than one and that its p-value is close to 0. The same conclusion would not be possible if the F-statistic were close or below 1 and the p-value were above a significance cutoff chosen by us (typically 1% or 5%). This indicates that there is a relationship between predictors (overall) and response variable.
+
+# How Well does the Model Fit the Data?
+
+From the results above, we observe that R-squared is quite large. However, if we were to try a model that only includes `TV` and `radio` to predict `sales` we would obtain an R-squared that is only slightly lower. As well, we notice that the p-value for newspaper ads is not significant. Why?
+
+R-squared will always increase when more variables are added to the model, even when they are only weakly associated with the response.  This is due to the fact that adding another variable to the least-squares equations used to fit the model will allow us to fit the training data, but not necessarily our testing set.
+
+How do these models compare in terms of `rmse`?
+
+As well, we must consider the following:
+
++ The coefficient estimates are only that: estimates. They are subject to reducible error.
++ Assuming that f, our model, is actually linear is a very strong assumption: many phenomena in reality are not linear. Therefore we will incur on *model bias*, which we can fix by choosing a different model.
++ Even if we knew that the real function relating our data is linear, we would still be subject to irreducible error, related to the variance of our error term, $Var(\epsilon)$.
+
+
+# Research Questions
+
+Now, we come back to our research questios:
+
+* Is there a relationship between advertising budget and sales? There is no sense in pursuing an analysis of ad expenditure vs sales if there is an only weak indication that ads influence sales.
+
+  - Yes, there is: we checked our F-statistic and p-value for the model and we found that the model is significant. 
+
+* How strong is the relationship between advertising budget and sales? Given a specific ad budget, can we predict sales with high accuracy (strong relationship) or is it only slightly better than a random guess (weak relationship)?
+
+  - We measured the "strength" of the relationship in two ways: using the RMSE, we obtained a measure of accuracy, while using R-squared, we obtained a measure of consistency (how well does the model explain the response's variability).
+
+* Which media contribute to sales? Do all three media contribute equally, or do just one or two of the media contribute? To answer this question, we need to separate the effects of each variable on sales.
+
+  - Based on each predictor's p-values we can see that TV and radio have a significant contribution to sales, but newspaper may not be significant. We will examine these effects further in our course.
+
+
+We will leave the other research questions unanswered for now:
+
+* How accurately can we estimate the effect of each medium on sales?
+* How accurately can we predict future sales?
+* Is the relationship linear?
+* Is there synergy among the advertising media?
+
+
+# References
+
++ James, Garreth, Daniela Witten, Trevor Hastie, and Robert Tibshirani. [*An Introduction to Statistical Learning with Applications in R.*](https://statlearning.com/) US: Springer, 2013.
++ Khun, Max and Julia Silge. [*Tidy Modeling with R*](https://www.tmwr.org/). Version 0.0.1.9008 (2021-01-19)
