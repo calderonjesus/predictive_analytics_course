@@ -1,0 +1,205 @@
+---
+title: "Neural Nets for Credit Prediction"
+subtitle: "Experiment Working Paper"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Experiments 
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+```
+
+# Load data
+
+```{r}
+load('./data/credit_data.Rda')
+```
+
+## Metrics
+
+```{r}
+perf_meas <-metric_set(roc_auc, precision, recall, f_meas, kap) 
+```
+
+# Data Split
+
+```{r}
+set.seed(123)
+credit_split <- initial_split(credit_dt, prop = 0.7, strata = default)
+credit_train <- training(credit_split)
+credit_test <- testing(credit_split)
+
+set.seed(456)
+credit_folds <- vfold_cv(credit_train, v = 5, repeats = 5, strata = default)
+```
+
+# Recipe
+
+Based on [Recommended preprocessing](https://www.tmwr.org/pre-proc-table.html) steps from Khun and Silge (2021):
+
++ Boosting requires the following pre-processing steps:
+
+  - Dummy variables (note: in this case, there are no categorical variables among predictors)
+  - Remove zero variance
+  - Imputation
+  - Decorrelation
+  - Normalization
+  - Symmetry enhancement
+
+```{r}
+nn_rec <- 
+  recipe(default ~ ., data = credit_train) %>%
+  update_role(id, new_role = "sample id") %>%
+  step_mutate(num_dependents_na = ifelse(is.na(num_dependents), 1, 0),
+              monthly_income_na = ifelse(is.na(monthly_income), 1, 0)) %>%
+  step_impute_bag(num_dependents, monthly_income) %>%
+  step_zv(all_predictors(), -all_outcomes()) %>%
+  step_corr(all_predictors(), -all_outcomes()) %>%
+  step_normalize(all_predictors(), -all_outcomes()) 
+
+```
+
+# Model
+
+```{r}
+nn_mod <-
+  mlp(hidden_units = tune(), epochs = 50) %>%
+  set_mode('classification') %>%
+  set_engine('nnet')
+```
+
+
+# Grid
+
+```{r}
+nn_grid <- grid_regular(hidden_units(), levels = 10)
+```
+
+## Workflow
+
+```{r}
+nn_wf <- 
+  workflow() %>%
+  add_recipe(nn_rec) %>%
+  add_model(nn_mod)
+```
+
+
+# Tune Grid
+
+```{r}
+library(doParallel)
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r}
+tune_ctrl <- control_resamples(save_pred = TRUE, verbose = TRUE)
+
+nn_res <-
+  nn_wf %>%
+  tune_grid(
+    credit_folds, 
+    grid = nn_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+```
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+# Model Assessment
+
+```{r}
+nn_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = hidden_units, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Neural Nets Performance', 
+       subtitle = 'Tuning Hidden Units', 
+       x = 'Hidden Units', y = 'Performance Score')
+```
+
+# Model Selection
+
+```{r}
+nn_top <- nn_res %>%
+  show_best(metric = 'roc_auc')
+
+```
+
+```{r}
+nn_best <- 
+  nn_res %>%
+  select_best( metric = 'roc_auc')
+nn_best
+```
+
+```{r}
+nn_by_se <- 
+  nn_res %>%
+  select_by_one_std_err(metric = 'roc_auc', 'trees')
+nn_by_se
+```
+
+
+# Store results
+
+With small datasets, the step below could make sense. With this, larger data set, the resulting workflow would be about 1.7 Gb uncompressed. In this case, it may be easier to store the workflow and some select Results.
+
+```{r}
+# nn_final <-
+#   nn_wf %>%
+#   finalize_workflow(nn_best)
+# 
+# nn_fit <- nn_final %>%
+#   fit(credit_train)
+```
+
+## Create Objects with Results
+
+```{r}
+
+nn_metrics <- 
+  nn_res %>%
+  collect_metrics() 
+
+nn_confusion <- 
+  nn_res %>%
+  collect_predictions(parameters = nn_best) %>%
+  conf_mat(truth = 'default', estimate = '.pred_class')
+
+nn_confusion
+```
+
+
+## Save
+
+```{r}
+save(nn_wf, nn_metrics, nn_confusion, nn_best, nn_top,
+     file = './data/neural_nets.Rda')
+```

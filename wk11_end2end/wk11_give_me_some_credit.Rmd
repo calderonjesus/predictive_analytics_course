@@ -1,0 +1,273 @@
+---
+title: "End-to-end experiments"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+# Introduction
+
+*Give me some credit* is the title of a useful credit data set. It was originially posted on Kaggle.com as a competition. It typically serves as a good example of an inbalanced data set with a long-standing ML use case: credit prediction.
+
+## Problem statement
+
+The objective is to predict default of a credit within the next two years, given a set of features of the credit observed today. 
+
+### Data 
+
+The data set can be obtained from the [competition's website](https://www.kaggle.com/c/GiveMeSomeCredit/data) (you need to register for a free account). We will work with the data in *cs-training.csv* and the variable descriptions in *Data Dictionary.xls*.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(readxl)
+library(knitr)
+library(GGally)
+library(scales)
+```
+
+```{r}
+credit_raw <- read_csv('./data/cs-training.csv')
+dictionary <- read_xls('./data/Data Dictionary.xls')
+```
+
+### Feature Dictionary
+
+The response variable and features (predictors) in the raw data are as follows:
+
+```{r}
+dictionary %>%
+  kable()
+```
+
+The variable names can be made shorter:
+
+```{r}
+credit_dt <- credit_raw %>%
+  select('id' = 'X1',
+         'default' = 'SeriousDlqin2yrs',
+         'unsec_credit_util' = 
+           'RevolvingUtilizationOfUnsecuredLines',
+         'age',
+         'times_past_due_30_59' = 
+           'NumberOfTime30-59DaysPastDueNotWorse',
+         'debt_ratio' = 'DebtRatio',
+         'monthly_income' = 'MonthlyIncome',
+         'num_c_and_l' = 'NumberOfOpenCreditLinesAndLoans',
+         'times_late_90' = 'NumberOfTimes90DaysLate',
+         'num_real_estate' = 'NumberRealEstateLoansOrLines',
+         'time_past_due_60_89' = 
+           'NumberOfTime60-89DaysPastDueNotWorse',
+         'num_dependents' = 'NumberOfDependents'
+         ) %>%
+  mutate(default = ifelse(default == 1, 'Yes', 'No'))
+```
+
+We rename the variables to a shorter version, but retain the meaning above.
+
+```{r}
+glimpse(credit_dt)
+```
+
+```{r}
+save(credit_dt, file='./data/credit_data.Rda')
+```
+
+## EDA
+
+First, we notice that the class of interest is heavily imbalanced. A minority of less than 7% is the class of interest.
+
+```{r}
+credit_dt %>%
+  ggplot(aes(x = default, fill = default)) +
+  geom_bar(stat = 'count') +
+  theme_minimal() +
+  scale_y_continuous(labels = comma_format()) +
+  scale_fill_brewer(palette = 2, type = 'qual') +
+  guides(fill = FALSE)+
+  labs(title = 'Default Indicator', 
+       subtitle = 'This class is heavily imbalanced', 
+       y = 'Frequency', x = 'Default')
+```
+
+Variables tend to have some outlier values. In the chart below, we transformed the values using a logarithmic function to reduce the visual effect of these outliers.
+
+```{r, fig.height = 12}
+credit_dt %>%
+  pivot_longer(unsec_credit_util:num_dependents, 
+               names_to = 'variable', 
+               values_to='value') %>%
+  ggplot(aes(x = default, y = value, fill = default)) +
+  geom_boxplot() + 
+  facet_wrap(~variable, scales = 'free_y', ncol = 2) +
+  theme_minimal() +
+  scale_y_log10(labels = comma_format()) +
+  scale_fill_brewer(palette = 2, type = 'qual') +
+  guides(fill = FALSE) +
+  labs(title = 'Default Indicator', 
+       subtitle = 'This class is heavily imbalanced', 
+       y = 'Frequency', x = 'Default')
+```
+
+Below is a different view of the distributional characteristics of the data. Notice that some variables have missing values. Some learning methods will benefit from imputing them.
+
+```{r}
+credit_dt %>%
+  pivot_longer(unsec_credit_util:num_dependents, 
+               names_to = 'variable', 
+               values_to='value')  %>%
+  group_by(variable) %>%
+  summarise(Min = min(value, na.rm = TRUE),
+            q25 = quantile(value, 0.25, na.rm = TRUE), 
+            Med = median(value, na.rm = TRUE),
+            Avg = mean(value, na.rm = TRUE),
+            q75 = quantile (value, 0.75, na.rm = TRUE),
+            Max = max(value, na.rm = TRUE),
+            IQR = IQR(value, na.rm=TRUE),
+            SD = sd(value, na.rm = TRUE),
+            NAs = sum(is.na(value))) %>%
+  kable(digits = 2, 
+        format.args = list('big.mark' = ','))
+
+```
+
+A closer look into missing values and how they relate to the outcome.
+
+```{r}
+credit_dt %>%
+  pivot_longer(unsec_credit_util:num_dependents, 
+               names_to = 'variable', 
+               values_to='value') %>%
+  filter(variable %in% c('monthly_income', 'num_dependents')) %>%
+  group_by(variable, default) %>%
+  summarise(Count = n(), 
+            NAs = sum(is.na(value))) %>%
+  mutate(Pct_NA = 100*NAs/Count)
+```
+
+## Assessment method
+
+Given that this is a problem with imbalanced classes, we will use ROC AUC. For information, we may report other measures such as precision, recall, sensitivity, specificity, confusion matrix, and so on. 
+
+## Brief description of conclusion
+
+
+# Boosting
+
+## Model description
+
+[Model description goes here.]
+
+## Hyperparameters
+
+[Hyperparameter description goes here.]
+
+
+
+## Preprocessing steps
+
+[Discuss the preprocessing steps that you applied. For example, "In this case, we recoded the missing values by adding an indicator, imputed missing values using a bagged tree approach (explain what this means), removed any zero variance variables that may have appeared, and decorrelated the variables in the data set (removed variables that were highly correlated above x threshold)".] 
+
+## Cross-validation results
+
+[Interesting and insightful observations about the tuning process go here.]
+
+```{r}
+# Load results from our experiments
+load('./data/boosted_trees.Rda')
+boost_metrics %>%
+  ggplot(aes(x = trees, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Boosted Trees Performance', 
+       subtitle = 'Tuning Number of Trees', 
+       x = 'N. Trees', y = 'Performance Score')
+
+```
+
+## Top configuration
+
+[the top fit is achieved for the configuration X.] The top five configurations are shown below.
+
+```{r}
+boost_top
+```
+
+The top configuration, 26 trees, produces the following confusion matrix. [This matrix is interesting because it shows that ...]
+
+```{r}
+boost_confusion
+```
+
+
+# NN
+
+## Model description
+
+[Model description goes here.]
+
+## Hyperparameters
+
+[Hyperparameter discussion]
+
+## Preprocessing steps
+
+[Pre-processing steps.]
+
+## Cross-validation results
+
+[Interesting and insightful observations about the tuning process go here.]
+
+```{r}
+# Load results from our experiments
+load('./data/neural_nets.Rda')
+nn_metrics %>%
+  ggplot(aes(x = hidden_units, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Neural Nets Performance', 
+       subtitle = 'Tuning Hidden Units', 
+       x = 'Hidden Units', y = 'Performance Score')
+
+```
+
+## Top configuration
+
+[the top fit is achieved for the configuration X.] The top five configurations are shown below.
+
+```{r}
+nn_top
+```
+
+The top configuration, 2 hidden units, produces the following confusion matrix. [This matrix is interesting because it shows that ...]
+
+```{r}
+nn_confusion
+```
+
+
+# Model selection and test performance
+
+[Selection and performance.]
+
+
+# Conclusion
+
+[Conclusion.]

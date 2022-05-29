@@ -1,0 +1,136 @@
+---
+title: "Where to go next?"
+author: "Jesús Calderón"
+output:
+  powerpoint_presentation:
+    reference_doc: ../afm346_template.pptx
+subtitle: ACC 690 - Predictive Analytics
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+## Machine Learning and Data Science
+
+::::::{.columns}
+:::{.column}
+
+**Topics**
+
++ Unsupervised Learning: dimensionality reduction, clustering, anomaly detection.
++ Deep Learning and Neural Networks
++ Text Analystics and NLP
++ ML Ops and Engineering
++ Visualization
++ Statistics, Time Series Analysis.
++ AI Ethics
+
+:::
+:::{.column}
+
+**References**
+
++ Wickham and Grolemund, [R for Data Science](https://r4ds.had.co.nz/)
++ Irizarry, [Introduction to Data Science](https://rafalab.github.io/dsbook/)
++ Casas, [Data Science Live Book](https://livebook.datascienceheroes.com/)
++ Silge and Robinson, [Text Mining with R](https://www.tidytextmining.com/) 
++ Khun and Johnson, [Feature Engineering and Selection: A Practical Approach for Predictive Models](http://www.feat.engineering/)
++ Hyndman and Athanasopoulous, [Forecasting: Principles and Practice](https://otexts.com/fpp2/)
++ Chollet and Allaire, [Deep Learning with R](https://www.manning.com/books/deep-learning-with-r)
++ Goodfellow, et al. [Deep Learning](https://www.deeplearningbook.org/)
+
+:::
+::::::
+
+
+## Programming
+
+::::::{.columns}
+:::{.column}
+
+**R programming**
+
++ Control structures (if-then, for/while loops, etc), functions, objects/classes
++ Why? To automate tasks and create better abstractions
++ Wickham, [Advanced R](https://adv-r.hadley.nz/)
++ Peng, [R Programming for Data Science](https://bookdown.org/rdpeng/rprogdatascience/)
++ Gillespie and Lovelace, [Efficient R programming](https://csgillespie.github.io/efficientR/)
++ Grolemund, [Hands-On Programming with R](https://rstudio-education.github.io/hopr/)
+
+:::
+:::{.column}
+
+**Other Programming Languages**
+
++ Python: [Learn Python the Hard Way](https://learnpythonthehardway.org/)
++ Libraries:
+  - Pandas for data manipulation
+  - Numpy for numerical methods
+  - Matplotlib & Seaborn for visualization
+  - Jupyter/Jupyter Lab
+  - SciKit-Learn, PyTorch, Tensorflow
+
+:::
+::::::
+
+## Visualization and Reproducible Documentation
+
+::::::{.columns}
+:::{.column}
+
++ [Edward Tufte's work](https://www.edwardtufte.com)
++ Healy, [Data Visualization](https://socviz.co/)
++ Wilke, [Fundamentals of Data Visualization](https://clauswilke.com/dataviz/)
++ Chang, [R Graphics Cookbook](https://r-graphics.org/)
+
+:::
+:::{.column}
+
++ Xie, [bookdown: Authoring Books and Technical Documents with R Markdown](https://bookdown.org/yihui/bookdown/)
++ Xie et al, [blogdown: Creating Websites with R Markdown](https://bookdown.org/yihui/blogdown/)
++ Fay et al, [Engineering Production-Grade Shinny Apps](https://engineering-shiny.org/)
+
+:::
+::::::
+
+## Data Sets and Publications
+
+::::::{.columns}
+:::{.column}
+
++ [UCI ML Repository](https://archive.ics.uci.edu/ml/index.php)
++ [Kaggle.com](https://www.kaggle.com/)
++ [Data is Plural](https://www.data-is-plural.com/)
++ [Tidy Tuesdays](https://github.com/rfordatascience/tidytuesday)
++ [Papers with Code](https://paperswithcode.com/)
++ [Google Data Search](https://datasetsearch.research.google.com/)
+
+:::
+:::{.column}
+
+**Publications**
+
++ [Towards Data Science](https://towardsdatascience.com/), [Data Science Central](https://www.datasciencecentral.com/), [Analytics Vidhya](https://www.analyticsvidhya.com/). Double check all materials from blogs.
++ [Arxiv](https://arxiv.org/)
++ [AISC](https://www.youtube.com/channel/UCfk3pS8cCPxOgoleriIufyg)
+
+:::
+::::::
+
+## Ethics
+
+
++ General Business: [Unethical Decision Making in Organizations](https://www.coursera.org/learn/unethical-decision-making)
++ [DataResponsibility.github.io](https://dataresponsibly.github.io/)
+
+  * [Publications](https://dataresponsibly.github.io/publications/)
+  * [Tools](https://dataresponsibly.github.io/tools/)
+  * [Comics](https://dataresponsibly.github.io/comics/)
+
+## Thank You!
+
+Please stay in touch:
+
++ jesus.calderon@maclear.ca
++ [www.linkedin.com/in/jcalderon](https://www.linkedin.com/in/jcalderon)

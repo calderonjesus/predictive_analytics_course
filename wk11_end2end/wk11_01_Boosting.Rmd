@@ -1,0 +1,199 @@
+---
+title: "Boosted Trees for Credit Prediction"
+subtitle: "Experiment Working Paper"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Experiments 
+
+# Load libraries
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+```
+
+# Load data
+
+```{r}
+load('./data/credit_data.Rda')
+```
+
+## Metrics
+
+```{r}
+perf_meas <-metric_set(roc_auc, precision, recall, f_meas, kap) 
+```
+
+# Data Split
+
+```{r}
+set.seed(123)
+credit_split <- initial_split(credit_dt, prop = 0.7, strata = default)
+credit_train <- training(credit_split)
+credit_test <- testing(credit_split)
+
+set.seed(456)
+credit_folds <- vfold_cv(credit_train, v = 5, repeats = 5, strata = default)
+```
+
+# Recipe
+
+Based on [Recommended preprocessing](https://www.tmwr.org/pre-proc-table.html) steps from Khun and Silge (2021):
+
++ Boosting requires missing value imputation (remove NAs). However, some experimentation shows that the model fails when `step_knnimpute()` or `step_bagimpute()` are applied.
++ This method may benefit from zero variance a and decorrelation.
+
+```{r}
+boost_rec <- 
+  recipe(default ~ ., data = credit_train) %>%
+  update_role(id, new_role = "sample id") %>%
+  step_mutate(num_dependents_na = ifelse(is.na(num_dependents), 1, 0),
+              monthly_income_na = ifelse(is.na(monthly_income), 1, 0)) %>%
+  step_bagimpute(num_dependents, monthly_income) %>%
+  step_zv(all_predictors(), -all_outcomes()) %>%
+  step_corr(all_predictors(), -all_outcomes()) 
+  
+
+```
+
+# Model
+
+```{r}
+boost_mod <-
+  boost_tree(trees = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('xgboost')
+```
+
+
+# Grid
+
+```{r}
+boost_grid <- grid_regular(trees(c(5, 100)), levels = 10)
+```
+
+## Workflow
+
+```{r}
+boost_wf <- 
+  workflow() %>%
+  add_recipe(boost_rec) %>%
+  add_model(boost_mod)
+```
+
+
+# Tune Grid
+
+```{r}
+library(doParallel)
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r}
+tune_ctrl <- control_resamples(save_pred = TRUE, verbose = TRUE)
+
+boost_res <-
+  boost_wf %>%
+  tune_grid(
+    credit_folds, 
+    grid = boost_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+```
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+# Model Assessment
+
+```{r}
+boost_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = trees, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Boosted Trees Performance', 
+       subtitle = 'Tuning Number of Trees', 
+       x = 'N. Trees', y = 'Performance Score')
+```
+
+# Model Selection
+
+```{r}
+boost_top <- boost_res %>%
+  show_best(metric = 'roc_auc')
+
+```
+
+```{r}
+boost_best <- 
+  boost_res %>%
+  select_best( metric = 'roc_auc')
+boost_best
+```
+
+```{r}
+boost_by_se <- 
+  boost_res %>%
+  select_by_one_std_err(metric = 'roc_auc', 'trees')
+boost_by_se
+```
+
+
+# Store results
+
+With small datasets, the step below could make sense. With this, larger data set, the resulting workflow would be about 1.7 Gb uncompressed. In this case, it may be easier to store the workflow and some select Results.
+
+```{r}
+# boost_final <-
+#   boost_wf %>%
+#   finalize_workflow(boost_best)
+# 
+# boost_fit <- boost_final %>%
+#   fit(credit_train)
+```
+
+## Create Objects with Results
+
+```{r}
+
+boost_metrics <- 
+  boost_res %>%
+  collect_metrics() 
+
+boost_confusion <- 
+  boost_res %>%
+  collect_predictions(parameters = boost_best) %>%
+  conf_mat(truth = 'default', estimate = '.pred_class')
+
+boost_confusion
+```
+
+
+## Save
+
+```{r}
+save(boost_wf, boost_metrics, boost_confusion, boost_best, boost_top,
+     file = './data/boosted_trees.Rda')
+```
