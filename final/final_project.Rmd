@@ -1,0 +1,175 @@
+---
+title: "Final Project: Default of Credit Card Clients"
+author: "Jesús Calderón"
+date: "July 2021"
+output: 
+  html_document:
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Introduction
+
+In this Final Project, you will predict defaults on credit card repayments, based on the data set published together with the work of Yeh and Lien (2009), which you can consult for additional details and ideas.
+
+The data set contains the following variables:
+    
++ `ID`: ID of each client
++ `LIMIT_BAL`: Amount of given credit in NT dollars (includes individual and family/supplementary credit
++ `SEX`: Gender (1=male, 2=female)
++ `EDUCATION`: (1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)
++ `MARRIAGE`: Marital status (1=married, 2=single, 3=others)
++ `AGE`: Age in years
++ `PAY_0`: Repayment status in September 2005 (-1=pay duly, 1=payment delay for one month, 2=payment delay for two months, … 8=payment delay for eight months, 9=payment delay for nine months and above)
++ `PAY_2`: Repayment status in August 2005 (scale same as above)
++ `PAY_3`: Repayment status in July 2005 (scale same as above)
++ `PAY_4`: Repayment status in June 2005 (scale same as above)
++ `PAY_5`: Repayment status in May 2005 (scale same as above)
++ `PAY_6`: Repayment status in April 2005 (scale same as above)
++ `BILL_AMT1`: Amount of bill statement in September 2005 (New Taiwan dollar)
++ `BILL_AMT2`: Amount of bill statement in August 2005 (NT dollar)
++ `BILL_AMT3`: Amount of bill statement in July 2005 (NT dollar)
++ `BILL_AMT4`: Amount of bill statement in June 2005 (NT dollar)
++ `BILL_AMT5`: Amount of bill statement in May 2005 (NT dollar)
++ `BILL_AMT6`: Amount of bill statement in April 2005 (NT dollar)
++ `PAY_AMT1`: Amount of previous payment in September 2005 (NT dollar)
++ `PAY_AMT2`: Amount of previous payment in August 2005 (NT dollar)
++ `PAY_AMT3`: Amount of previous payment in July 2005 (NT dollar)
++ `PAY_AMT4`: Amount of previous payment in June 2005 (NT dollar)
++ `PAY_AMT5`: Amount of previous payment in May 2005 (NT dollar)
++ `PAY_AMT6`: Amount of previous payment in April 2005 (NT dollar)
++ `default.payment.next.month`: Default payment (1=yes, 0=no)
+
+The variable `default.payment.next.month` is the response that we are looking to predict, while the rest of the variables are predictors or identifiers. The data set is available through the [UCI Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients).
+
+
+# General Guidelines
+
+Please submit a single report and your working papers. For each document, submit both Rmd and HTML files.
+
+The objective of the report is to provide two recommended models for defaults on credit card repayments. Your audience will be two-fold: an executive that will read the report and a data scientist who will read the report and go through the working papers and then give their opinion to the executive. Based on their assessment, your project will be approved. 
+
+Please structure your report as follows:
+
++ Introduction
+  - Problem statement
+  - Overview of sections
+  - Outline of recommended models
++ Methodology
+  - Overview of modelling process: describe the steps that you used to select the models below. Keep this at a high level and provide a general overview of the process, feel free to briefly discuss models that you tested but did not include in this report.
+  - Model selection: describe the process that you used to tune hyperparameters, including the type of grid search that you used (regular or Latin hypercube), Bayesian optimization, or combinations of methods, as well as why you made this choice. As well, discuss how you selected among different models, such as knn, linear regression, random forest, and so on.
+  - Performance metrics: discuss the performance metric that you will optimize by  explaining why you chose this metric and what it measures. If you used other performance metrics, explain what they are and how you used them.
+  - Performance estimates: discuss cross-validation, the number of folds that you used, the number of repeats. As well, the proportions for sampling the testing and training data sets, as well as the stratification that you used.
+  - Feature engineering: explain any data preparation recipes that you applied. Discuss your framework to select the different steps in the recipe. 
+
++ Data
+  - Describe the data: number of rows, variables, names of variables and description.
+  - Exploratory Data Analysis: 
+    * Comment the data exploration below.
+    * For each numeric predictor add a visualization that shows its distribution and its relationship with the target variable.  
+    * Add a summary table that includes all numeric variable at an aggregate level, showing one variable per row and one descriptive statistic per column. The descriptive statistics should include the minimum and maximum values, a centrality measure (mean or median), a measure of dispersion (standard deviation or inter-quartile range), and the number of missing values. Feel free to include more statistics as you see fit. If the table is too long, feel free to  split it row-wise.  
+  
+  
++ Baseline Model
+  - Choose an explainable, but  under-perfoming model as a baseline. Select one that is easy to explain, that trains fast, and that performs better than random selection.
+  - Briefly describe the model and explain why you chose it as a baseline.
+  - Describe the hyperparameters
+  - Preprocessing steps
+  - Cross-validation results
+  - Top configuration
++ Low-Complexity Model
+  - The executive and data scientist have requested that, together with the top-performing model, you present a model selection that is less complex because it requires a smaller number of parameters to be learned (you can use `select_by_one_std_err()` and `select_by_pct_loss()`, for example) or because the modelling methodology is more explainable such as in the case of a Lasso logistic regression. 
+  - Briefly describe the model and explain why you chose it as a low-complexity model.
+  - Describe the hyperparameters
+  - Preprocessing steps
+  - Cross-validation results, as required
+  - Top configuration
++ Top Performing Model
+  - Model description, including how much did this model outperform others. For instance, discuss if its performance is significantly superior than others or only marginally better. As well, discuss the time required to train the model: does it make sense to invest more time if the model's benefits are marginal?
+  - Describe the hyperparameters
+  - Preprocessing steps
+  - Cross-validation results, as required
+  - Top configuration
++ Test Results
+  - Train and test the two selected models above. 
++ Conclusion
+  - Make a model recommendation and explain your selection rationale.
+  - If there are circumstances in which you believe that the alternative model should be chosen, please explain them. If not, then explain why your choice is always superior to the alternative.
+
+In the following sections, you will find the details that your report must contain.
+
+## Working papers
+
+In your submission, please include the working papers for the three models: baseline, low-complexity and top-performing. These will be proof of your work, and I may give points for partial results if I find them in the working papers. 
+
+Working documents must be sufficient for a knowledgeable peer to understand and reproduce your work. Add enough details and structure for this purpose, but there is not prescribed template that you need to follow.
+
+As a recommendation, create an Rmd file per model family. Each file will have the same components, and you can create your template for this. At the end of cross-validation, save your results using `save()` as in the previous lectures. In the main report, you can `load()` these results to use in your discussion.
+
+
+
+# Obtaining the Data
+
+Download the data set from the [UCI Machine Learning Repository](https://archive.ics.uci.edu/ml/datasets/default+of+credit+card+clients) by following the link "Data Folder" and downloading 'default of credit card clients.xls'. 
+
+You can load the data into R with the code below.
+
+```{r}
+library(tidyverse)
+library(readxl)
+
+credit_raw = read_xls('./data/default of credit card clients.xls', 
+         skip = 1)
+```
+
+
+## Variable Names
+
+The variables do not follow the snake-case convention, but we can easily change this with the functions in the package janitor. As well, you may want to shorten the response variable's name (notice you can select "everything else" with the function `everything()`).
+
+```{r}
+library(janitor)
+credit_names <- credit_raw %>%
+        clean_names() %>%
+        select(default = default_payment_next_month,
+               everything())
+```
+
+## Convert Categorical Variables to Factor Objects
+
+Some of the variables that you will use are categorical, although the labels are encoded as numbers. To specify them as factors, you can use the code:
+
+```{r}
+credit_dt <- credit_names %>%
+  mutate(across(.cols = c('default', 'sex', 
+                          'education', 'marriage',
+                          matches('pay_[0-9]')), 
+                as_factor))
+
+glimpse(credit_dt)
+```
+
+## Feature Engineering
+
+One last recommendation: consider adding a few new features using `step_mutate()` in your recipes. Notice that you have variables bill_amtX and pay_amtX, where X is lag in {1, 2, 3, 4, 5, 6}. A new feature could be the proportion of the bill that was paid: prop_billX = pay_amtX/(bill_amtX + 1). The addition of 1 to the denominator is an easy fix for cases in which bill_amtX is 0.  More formally, the recipe's step mutate would look like: 
+
+```{r, eval = FALSE}
+recipe(...) %>% 
+  step_mutate(prop_bill1 = pay_amt1/(bill_amt1 + 1),
+              prop_bill2 = pay_amt2/(bill_amt2 + 1),
+              ... 
+              prop_bill6 = pay_amt6/(bill_amt1 + 1))
+```
+
+This step may (or may not) increase the performance of your model. You can decide to include it via your cross-validation results. As well, you could design your experiments to automatically test two workflows: one with a recipe with the additional `step_mutate()` and one without it.
+
+
+# References
+
++ Dua, D. and Graff, C. (2019). [UCI Machine Learning Repository](http://archive.ics.uci.edu/ml). Irvine, CA: University of California, School of Information and Computer Science. 
++ Kuhn, M and J. Silge (2021). [Tidy Modeling with R](https://www.tmwr.org/). 
++ Yeh, I. C., & Lien, C. H. (2009). [The comparisons of data mining techniques for the predictive accuracy of probability of default of credit card clients](https://bradzzz.gitbooks.io/ga-dsi-seattle/content/dsi/dsi_05_classification_databases/2.1-lesson/assets/datasets/DefaultCreditCardClients_yeh_2009.pdf). Expert Systems with Applications, 36(2), 2473-2480.
+

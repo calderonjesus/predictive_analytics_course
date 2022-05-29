@@ -1,0 +1,190 @@
+---
+title: "Untitled"
+author: "Jesús Calderón"
+date: "03/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(readxl)
+library(janitor)
+library(tictoc)
+library(doParallel)
+
+credit_raw <- read_xls('./data/default of credit card clients.xls', 
+         skip = 1)
+
+
+credit_names <- credit_raw %>%
+        clean_names() %>%
+        select(default = default_payment_next_month,
+               everything())
+
+credit_dt <- credit_names %>%
+  mutate(across(.cols = c('default', 'sex', 
+                          'education', 'marriage',
+                          matches('pay_[0-9]')), 
+                as_factor)) %>%
+  mutate(default = fct_relevel(default, '1'))
+
+glimpse(credit_dt)
+```
+
+```{r}
+credit_dt %>%
+  select(pay_0:pay_6, default) %>%
+  pivot_longer(pay_0:pay_6) %>%
+  ggplot(aes(x = value, fill = default)) +
+  geom_bar(stat = 'count') +
+  facet_wrap(~name) +
+  theme_minimal() +
+  labs(title = 'Colour-Coded Bar Chart')
+```
+
+
+```{r}
+credit_dt %>%
+  select(pay_0:pay_6, default) %>%
+  pivot_longer(pay_0:pay_6) %>%
+  group_by(name) %>%
+  count(default, value) %>%
+  pivot_wider(names_from = 'name', values_from = 'n') %>%
+  arrange(value, default) %>%
+  View()
+
+  
+```
+
+
+
+
+```{r}
+set.seed(123)
+dt_split <- initial_split(credit_dt, 
+                              prop = 0.7, 
+                              strata = default)
+dt_train <- training(dt_split)
+dt_test <- testing(dt_split)
+
+set.seed(456)
+dt_folds <- dt_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = default)
+```
+
+
+```{r}
+base_rec <- 
+  recipe(default ~., data = dt_train) %>%
+  update_role(id, new_role = 'ID') %>%
+  step_dummy(all_nominal_predictors())   %>%
+  step_zv(all_predictors()) %>%
+  step_corr(all_numeric_predictors())
+```
+
+
+
+
+
+```{r}
+x <- base_rec %>% 
+  prep() %>% 
+  bake(new_data = dt_train)
+
+x %>%
+  summarise(across(.fns = ~sum(is.na(.x))))
+```
+
+
+# K NN
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('kknn')
+
+
+knn_wf <- 
+  workflow() %>%
+  add_recipe(base_rec) %>%
+  add_model(knn_mod)
+```
+
+
+```{r}
+
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tic()
+knn_res <- 
+  knn_wf %>%
+  tune_grid(
+    dt_folds,
+    grid = grid_regular(neighbors(range = c(2, 50)), levels = 10),
+    metrics = metric_set(roc_auc, f_meas),
+    control = control_grid(save_pred = TRUE)
+  )
+toc()
+stopCluster(cl)
+```
+
+# Logistic Regression
+
+```{r}
+lr_mod <- 
+  logistic_reg(penalty = tune(),
+               mixture = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('glmnet')
+
+wf_base <- 
+  workflow() %>%
+  add_recipe(base_rec) %>%
+  add_model(lr_mod)
+
+```
+
+```{r}
+grid_lr <- grid_regular(penalty(),
+                     mixture(),
+                     levels = 8)
+
+
+perf_mx <- metric_set(roc_auc, precision, recall, f_meas)
+```
+
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+lr_res <-
+  wf_base %>%
+  tune_grid(
+    dt_folds, 
+    grid = grid_lr,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+```{r}
+lr_res %>% collect_metrics()
+
+lr_res$.notes[[1]]$.notes
+```
