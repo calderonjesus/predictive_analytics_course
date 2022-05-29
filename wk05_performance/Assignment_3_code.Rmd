@@ -1,0 +1,349 @@
+---
+title: "Assignment 3 - Classification under k-Fold CV"
+author: "Jesús Calderón"
+
+output: 
+  html_document:
+    toc: True
+    toc_float: True
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, eval = TRUE)
+```
+
+# Introduction
+
+In this assignment, we will continue working with the Default data set that we saw in one of our earlier video lectures. We will tune and fit two models, a non-parametric k-NN and a parametric Logistic Regression.  We will perform hyperparameter tuning, model selection and assessment using Cross Validation. Finally, we will evaluate our final selection using the test set. 
+
+On this occasion, I would prefer that you focus on the code rather than on creating a report. Feel free to use this template and simply add your solutions and responses to it. Feel free to add an indicator such as **Response** to indicate where you made comments or additions.
+
+# Data Preparation and EDA
+
+Load all the libraries that you need and the default data set.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(GGally)
+library(knitr)
+```
+
++ Perfom the operation below. This will re-order the factor levels of the variable default (originally, the levels are "No" and "Yes", we will invert their order). We do this to make it easier to implement our classifier, which by default consider the first event the one of interest. We could also alter this behaviour through the `event_level` option in `control_repeats()`, but we will examine these more advanced options later in the course.
+
+> *Guidance.* The original data set has the levels in the factor variable `default` ordered as 'No' and 'Yes'. The value of interest is 'Yes', therefore it must appear in the first position. To do this, one must relevel the variable `default`.
+
+```{r, echo = TRUE}
+data("Default")
+
+def_dt <- Default %>%
+  mutate(default = fct_relevel(default, 'Yes'))
+
+```
+
++ As for the EDA, we know this data by now. Simply draw a `ggplaris()` plot.
+
+```{r}
+def_dt %>%
+  ggpairs() +
+  theme_minimal() +
+  labs(title = 'Joint Distribution of Variables in the Default Data Set')
+```
+
+
+# Metrics
+
++ Define a metric set (`metric_set()`) that contains the following three metrics:
+
+  * ROC AUC (`roc_auc`).
+  * Precision and Recall (`precision` and `recall`)
+  * Accuracy (`accuracy`)
+  
++ We will optimize model selection using ROC AUC, but we would like to get information on the other metrics.
+
+> *Guidance.* Additional metrics would generally include metrics such as: accuracy, Cohen's Kappa, precision, recall, sensitivity, specificity, and F-measure. 
+
+```{r}
+perf_mx <- metric_set(roc_auc, precision, 
+                      recall, accuracy)
+```
+
+## Data Split and Folds
+
+We start by splitting our data and creating a simple recipe. A 70/30 training/test split, as well as 10-fold cross-validation stratified using the default indicator. Set the following seeds:
+
++ `set.seed(987)` before the initial split.
++ Perform the initial split.
++ `set.seed(654)` before the cross-validation folds.
++ Define the training set folds with 10 folds, stratification based on default and five repetitions.
++ Please comment: what is the difference between specifying the number of folds and the number of repetitions?
+
+```{r}
+set.seed(987)
+def_split <- initial_split(def_dt, prop = 0.7, strata=default)
+def_train <- training(def_split)
+def_test <- testing(def_split)
+set.seed(654)
+def_folds <- def_train %>% 
+  vfold_cv(v=10, strata=default, repeats=5)
+```
+
+
+# k-Nearest Neighbours
+
+## Recipe 
+
+Create a recipe that only specifies a formula where the response variable is `default` and all predictors are included. 
+
+> *Guidance.* This is not the only way to write the formula, an alternative is: `default ~ student + balance + income`.
+
+```{r}
+def_rec1 <- 
+  recipe(default ~ ., data = def_train)
+```
+
+## k-NN Model
+
++ Create a k-NN model object. Indicate that you will tune the neighbors parameter using CV.
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('classification') %>%
+  set_engine('kknn')
+```
+
+
+## k-NN Worfklow Tuning and Assessment
+
++ Create a workflow `wf_knn`. Add the recipe and model above to the workflow you created. 
++ Verify that you only need to specify one parameter, neighbors. 
+
+```{r}
+wf_knn <- 
+  workflow() %>% 
+  add_recipe(def_rec1) %>% 
+  add_model(knn_mod)
+
+wf_knn %>% parameters()
+```
++ Tune this workflow. Try k = 2, 4, 8, 16,..., 2^8  (which can be written as `2^seq(1, 8, 1)`).
+
+
+> *Guidance.* Sequence of neighbors could also be written as `c(2, 4, 8, 16, 32, 64, 128, 256)`.
+
+```{r}
+param_knn <- crossing(
+  neighbors = 2^seq(1, 8, 1)
+)
+```
+
++ In the `tune_grid()`, pass the following argument: `control = control_resamples(save_pred=TRUE)`. This is a necessary step to calculate the confusion matrices below.
+
+> *Guidance.* The control function `control_resamples(save_pred = TRUE)` is needed to answer questions further below.
+
+```{r}
+tune_knn1 <-
+  wf_knn %>%
+  tune_grid(
+    def_folds, 
+    grid = param_knn,
+    metrics=perf_mx,
+    control = control_resamples(save_pred=TRUE)
+  )
+
+```
+
++ Display the top performing models in this workflow. (tip: use `show_best()`). 
+
+```{r}
+show_best(tune_knn1, metric = 'roc_auc') %>%
+  kable(digits = 3)
+```
+
++ Show a graph of the different estimated performance metrics by neighbor configuration. You can use `autoplot()` (be mindful of the scales). However, you may get a better view of the results if you use `collect_metrics()` in combination with `ggplot()` and `facet_wrap()`.
+
+> *Guidance.* Notice that precision is not defined for 256 neighbors. This is because no positive cases are predicted and, therefore, in the calculation of precision the denominator is 0. As well, this is due to the fact that the problem has imbalanced classes (the positive class is a small minority). The model is not useful for our purposes when this happens because we care about the positive cases. 
+
+
+```{r}
+tune_knn1 %>%
+  collect_metrics() %>%
+  ggplot(aes(x = neighbors, y = mean)) +
+  geom_point() + 
+  geom_line() +
+  facet_wrap(~.metric, scales = 'free_y') +
+  theme_minimal() +
+  labs(title = 'Default Predictions',
+       subtitle = 'k-NN Model Tuning', 
+       x = 'Nieghbors (k)')
+```
+
+## k-NN Results
+
++ Interpret the results:
+
+  * What is the best-performing model if you were to simply choose the maximum ROC AUC?
+  * What does recall and precision tell you about this model?
+  * Is accuracy useful?
+
++ Obtain the resampled confusion matrix:
+
+  * Select the best performing model with `select_best()`.
+  * Use the function `conf_mat_resampled()` together with the argument `parameters` to find the resampled confusion matrix for the top-performing model.
+  * Explain what a resampled confusion matrix is. You can obtain this information with `?con_mat_resampled`.
+  * What is the main issue with this model?
+
+
+```{r}
+best_knn1 <- select_best(tune_knn1, metric = 'roc_auc')
+
+tune_knn1 %>% 
+  conf_mat_resampled(parameters = best_knn1)
+```
+
+
+# Logistic Regression 
+
+## Recipe
+
++ Create a recipe that includes the same formula as before. 
+
+  * Include a step to create a dummy variable representation for `student`.
+  * Include  a step to normalize all numeric variables in the data. (Tip: the order counts, if you convert variables to dummies, they become numeric.)
+  
+  
+```{r}
+def_rec2 <- 
+  def_rec1 %>%
+  step_normalize(all_numeric()) %>%
+  step_dummy(student) 
+```
+
+
+## Model
+
++ Create a logistic regression model, indicating that you wish to tune the `penalty` parameter. Set `mixture` equal to 1 and the engine to `"glmnet"`.
+
+```{r}
+lr_mod <-
+  logistic_reg(penalty = tune(),
+               mixture = 1) %>%
+  set_engine('glmnet')
+```
+
+
+## Workflow
+
++ Construct a workflow with the recipe and model that you just created.
++ Verify that you will only tune one parameter, penalty.
+
+```{r}
+wf_lr1 <- 
+  workflow() %>% 
+  add_recipe(def_rec2) %>% 
+  add_model(lr_mod)
+
+wf_lr1 %>% parameters()
+```
+
+### Parameter Grid
+
+Create a parameter grid to experiment with penalty values ranging between 0 and 0.1 with 0.025 increments.
+
+```{r}
+param_lr <- crossing(
+  penalty = seq(0.0, 0.1, 0.025),
+)
+```
+
++ Experiment and obtain the performance metrics. Like before, include the line `control = control_resamples(save_pred=TRUE)` in your `tune_grid()` statement.
+
+```{r}
+tune_lr1 <-
+  wf_lr1 %>%
+  tune_grid(
+    def_folds, 
+    grid = param_lr,
+    metrics=perf_mx, 
+    control = control_resamples(save_pred=TRUE)
+  )
+
+```
+
+### Optimal Params
+
++ Show the top performing models.
+
+```{r}
+show_best(tune_lr1, metric = 'roc_auc') %>%
+  kable(digits = 3)
+```
+
++ Plot the performance metrics for all levels of the parameter penalty. 
+
+> *Guidance.* Similar to the case above, precision is not defined for higher penalty values. 
+
+
+```{r}
+tune_lr1 %>%
+  collect_metrics() %>%
+  ggplot(aes(x = penalty, y = mean)) +
+  geom_point() + 
+  geom_line() +
+  facet_wrap(~.metric) +
+  theme_minimal() +
+  labs(title = 'Sales Predictions by Revenue Spending',
+       subtitle = 'Linear Regression Model Tuning')
+```
+
++ Obtain the resampled confusion matrix:
+
+  * Select the best performing model with `select_best()`.
+  * Use the function `conf_mat_resampled()` together with the argument `parameters` to find the resampled confusion matrix for the top-performing model.
+  * Do you think that this model performs better than the previous one? Why?
+
+
+```{r}
+best_lr1 <- select_best(tune_lr1, metric = 'roc_auc')
+
+tune_lr1 %>% 
+  conf_mat_resampled(parameters = best_lr1)
+
+```
+
+# Test the Model
+
++ Out of the two models selected in the steps above, chose the one that you believe will perform better. 
++ Finalize the workflow (`finalize_workflow()`). 
++ Train on the entire training set and evaluate its ROC AUC on the test set. 
+
+
+```{r}
+fit_lr <- wf_lr1 %>%
+  finalize_workflow(best_lr1) %>%
+  fit(def_train) 
+
+def_test %>% 
+  bind_cols(predict(fit_lr, def_test, type = 'prob')) %>%
+  roc_auc(truth = default, .pred_Yes)
+```
+
++ Build a confusion matrix for the test results.
+
+```{r}
+def_test %>% 
+  bind_cols(predict(fit_lr, def_test)) %>%
+  conf_mat(truth = default, estimate = .pred_class)
+```
+
+
++ Did you get good error estimates using CV? Did they align with the test error calculation?
+
+> *Guidance*. The idea is that CV will give better error estimates than trainin. In the response, a comparison should be made between CV and test errors.
+
++ What type of prediction do you think that the model should be enhanced? In particular, consider the context of the problem: defaults on credit card payments.
+
+> *Guidance.*  The idea would be to enhance prediction quality for the 'Yes' (defaulted) case.
