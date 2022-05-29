@@ -1,0 +1,253 @@
+---
+title: "Ensemble Methods: Random Forest"
+subtitle: "The Office Rating Prediction"
+author: "Jesús Calderón"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+
+
+```
+
+# Main Points
+
+In this document we will discuss:
+
++ How to tune a Random Forest model.
++ How to tune a parameter that requires the workflow to be finalized. 
+
+# Load Libraries and Data
+
+We load the data that we prepared previously. You may need to `install.packages('baguette')`.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+# Build a Random Forest Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+
+## Recipe
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`:
+
++ Update the role of variable `episode_name` to `'ID'`. This will preclude it from the set of predictors and outcomes.
++ We apply a zero variance filter ([`step_zv()`](https://recipes.tidymodels.org/reference/step_zv.html)) to all numeric predictors.
++ We remove highly correlated variables with ([`step_corr()`](https://recipes.tidymodels.org/reference/step_corr.html)).
++ We
+
+```{r}
+office_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(all_numeric(), -all_outcomes())
+```
+
+## Model
+
+The main arguments to the `rand_forest()` model are:
+
++ `mtry`: The number of predictors that will be randomly sampled at each split when creating the tree models.
++ `trees`: The number of trees contained in the ensemble.
++ `min_n`: The minimum number of data points in a node that are required for the node to be split further.
+
+
+
+
+```{r}
+rf_mod <- 
+  rand_forest(trees = tune(), mtry = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('ranger')
+```
+
+## Grid
+
+In this case, one parameter, `mtry()` is to be determined as the product of our pipeline (the results of the recipe). The range of `mtry` is determined at runtime with a minimum of 1 feature and maximum of m features, m being the number of columns in the data.
+
+
+```{r}
+rf_grid <- grid_latin_hypercube(
+            trees(range = c(500, 1500)), 
+            finalize(mtry(), office_train), 
+            size = 50)
+```
+
+
+## Workflow
+
+We create a workflow.
+
+```{r}
+rf_wf <- 
+  workflow() %>%
+  add_recipe(office_rec) %>%
+  add_model(rf_mod)
+```
+
+
+# Tune Grid
+
+Parallel tuning.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r, time_it = TRUE}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+rf_res <-
+  rf_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = rf_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+Stop the cluster.
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+# Results and Model Selection
+
+```{r}
+rf_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = mtry, y = mean, colour = trees)) +
+  geom_point() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Random Forest Performance', 
+       subtitle = 'Tuning Trees and Number of Sample Features', 
+       x = 'N Sampled Attributes', y = 'Performance Score')
+```
+
+## Model Selection
+
+```{r}
+rf_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3, 
+        caption = 'Top-Performing Models by RMSE')
+```
+
+
+```{r}
+rf_best <- 
+  rf_res %>%
+  select_best( metric = 'rmse')
+rf_best %>%
+  kable(digits = 3, 
+        caption = 'Top-Performing Model by RMSE')
+```
+
+```{r}
+rf_by_se <- 
+  rf_res %>%
+  select_by_one_std_err(metric = 'rmse', 'penalty')
+rf_by_se %>%
+  kable(digits = 3, 
+        caption = 'Top Performing Model Adjusted by SE (RMSE)')
+```
+
+
+
+```{r}
+rf_res %>%
+  collect_predictions(parameters = rf_best) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+rf_final <-
+  rf_wf %>%
+  finalize_workflow(rf_best)
+
+rf_fit <- rf_final %>%
+  fit(office_train)
+```
+
+```{r}
+
+rf_fit %>% pull_workflow_fit()
+
+```
+
+# Save Model Objects
+
+```{r}
+save(rf_fit, rf_res, rf_wf, file = './data/rf_res.Rda')
+```

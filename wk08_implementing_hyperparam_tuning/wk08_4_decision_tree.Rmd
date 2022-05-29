@@ -1,0 +1,327 @@
+---
+title: "Decision Trees"
+subtitle: "The Office Rating Prediction"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+
+```
+
+# Main Points 
+
+Through this example, you will learn:
+
++ How to regularize a Decision Tree model.
++ How to adjust the recommended values form library dials.
+
+# Load Libraries and Data
+
+We load the data that we prepared previously.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(rpart.plot)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+# Build a Regression Tree Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+
+## Recipe
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`, we will not apply any pre-processing steps.
+
+
+```{r}
+office_dt_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') 
+```
+
+## Model
+
+The model is defined in the usual way, using the `rpart` engine.
+
+```{r}
+dt_mod <- 
+  decision_tree(cost_complexity = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('rpart')
+```
+
+## Grid
+
+The decision tree model can be regularized by the number of levels of the tree (`tree_depth`), the minimum number of observations for a split to occur in a node (`min_n`), or the `cost_complexity` factor.
+
+We will optimize the model using cost complexity to optimize the tree, which essentially removes partitions (or "decision points") from the decision trees if they add complexity, but do not add information gain. As usual, we can use the library dials in combination with `grid_regular()` to perform this regularization.
+
+```{r}
+dt_grid <- grid_regular(cost_complexity(), 
+                        levels = 25)
+```
+
+
+## Workflow
+
+Set up a workflow with recipe and model:
+
+```{r}
+dt_wf <- 
+  workflow() %>%
+  add_recipe(office_dt_rec) %>%
+  add_model(dt_mod)
+```
+
+
+# Tune Grid
+
+Set up a parallel cluster and run the CV experiments.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+dt_res <-
+  dt_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = dt_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+Do not forget to stop the cluster. Bad things happen if you don't.
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+# Results and Model Selection
+
+
+```{r}
+dt_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = cost_complexity, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Decision Tree Performance', 
+       subtitle = 'Cost Complexity (Log Scale)', 
+       x = 'Cost Complexity (Log Scale)', y = 'Performance Score')
+```
+
+# Adjusting the Parameter Range
+
+Notice in the results above that the most interesting range in terms of results are the Cost Complexity values between 1e-3.5 to 1e-1, the remaining part of the range does not practically move and do not give us good information about the model. In this case, we can adjust the grid to restrict the range to a subset of the recommended values. After this, we revalidate the model.
+
+## New Grid
+
+In this case, we will restrict the grid on which we perform CV to 1e-2 to 1e-1. We know that the range must be specified in powers of 10, since the documentation (`?cost_complexity()`) indicates that the range is transformed using `log10_trans()`. We could, of course, modify this behaviour by passing a parameter `trans`, which we will not do in this case. 
+
+```{r}
+dt_grid_restrict <- grid_regular(cost_complexity(range = c(-2, -1)), 
+                                 levels = 25)
+```
+
+
+## Re-CV the Workflow
+
+We can use the same workflow as before, since the only thing that change was the grid. 
+
+Set up again the parallel cluster and run the CV experiments.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+
+Re-perform CV using the updated grid.
+
+```{r}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+dt_res_rest <-
+  dt_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = dt_grid_restrict,  #Updated grid
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+Do not forget to stop the cluster. Bad things happen if you don't.
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+## Results and Model Selection based on Restricted Grid
+
+
+```{r}
+dt_res_rest %>%
+  collect_metrics() %>%
+  ggplot(aes(x = cost_complexity, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Decision Tree Performance', 
+       subtitle = 'Cost Complexity (Log Scale)', 
+       x = 'Cost Complexity (Log Scale)', y = 'Performance Score')
+```
+
+
+
+
+
+# Select Best 
+
+```{r}
+dt_res_rest %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3, 
+        caption = 'Top Performing Models by RMSE')
+```
+
+
+```{r}
+dt_best <- 
+  dt_res_rest %>%
+  select_best( metric = 'rmse')
+dt_best
+```
+
+```{r}
+dt_by_se <- 
+  dt_res_rest %>%
+  select_by_one_std_err(metric = 'rmse', 'penalty')
+dt_by_se %>%
+  kable
+```
+
+
+
+```{r}
+dt_res_rest %>%
+  collect_predictions(parameters = dt_best) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Decision Tree Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+dt_final <-
+  dt_wf %>%
+  finalize_workflow(dt_best)
+```
+
+
+# Decision Tree
+
+```{r}
+dt_fit <- 
+  dt_final %>%
+  fit(office_train) 
+```
+
+
+```{r}
+dt_mod_fit <- dt_fit %>%
+  pull_workflow_fit() 
+```
+
+We can use library rpart.plot to display the fit decision tree.
+
+```{r}
+rpart.plot(dt_mod_fit$fit, roundint = FALSE)
+```
+
+
+# Save Model Objects
+
+```{r}
+save(dt_fit, dt_res, dt_wf, file = './data/dt_res.Rda')
+```

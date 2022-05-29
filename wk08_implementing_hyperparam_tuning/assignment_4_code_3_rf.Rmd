@@ -1,0 +1,249 @@
+---
+title: 'Assignment 4: Predicting Stock Returns'
+subtitle: 'Random Forest (3/3)'
+author: "Jesús Calderón"
+date: "02/12/2021"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+## Random Forest
+
+```{r, warning = FALSE}
+library(tidyverse)
+library(tidymodels)
+library(ISLR)
+library(doParallel)
+library(tictoc)
+library(knitr)
+```
+
+```{r}
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today) %>%
+  mutate(Direction = fct_relevel(Direction, 'Up'))
+```
+
+> Guidance: this solution includes a releveling of Direction such that "Up" is the first level. This is particularly relevant in the context of the problem since this is the level of importance (we care about "Up" movements). It has an effect on measures such as ROC AUC.
+
++ Train your models with a 5-fold cross-validation and 5 repetitions. Set the stratification variable to Direction and decide if Year should be a predictor.
++ Random seeds:
+
+  - Please, use seed 123 for the training/testing partition.
+  - Please, use seed 456 for the cross validation partition.
+
+```{r}
+set.seed(123)
+dt_split <- initial_split(market_dt, 
+                              prop = 0.7, 
+                              strata = Direction)
+dt_train <- training(dt_split)
+dt_test <- testing(dt_split)
+
+set.seed(456)
+dt_folds <- dt_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = Direction)
+```
+
+
++ Recipes. For each model, try two recipes: 
+  
+  - For each model, consult the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html). Add recipe components as recommended by the text. You can call this the "base" recipe.
+  - In addition to the recipe above, add another recipe with the intention of enahncing performance. Feel free to try any pre-processing step available in [the recipes library](https://recipes.tidymodels.org/reference/index.html). You can call this an "enhanced" recipe.
+
+
+> Guidance: 
+>
+>+ Apply a zero variance filter, `step_zv()`.
+>+ Apply decorrelation, `step_corr()`.
+>+ The data set does not have missing values, therefore it is not necessary to apply missing value imputation.
+
+
+```{r}
+rf_base_rec <- 
+  recipe(Direction ~ ., data = dt_train) %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(Lag1:Lag5, -all_outcomes())
+```
+
+
+> Guidance: the idea for the second recipe is to motivate experimentation. The base recipe should be enhanced with at least one additional step which could be a basis spline, Yeo-Johnoson transformation, a function of log transformation (log1p, for instance), etc. Some transformations may not have effect for certain models (normalization, for instance), so we are expecting that the recipe does have effect on performance.  
+> In this case, the recipe constrains the predictors and applies a basis spline transformation, but it is certainly not the only way to proceed.
+
+```{r}
+rf_enh_rec <- 
+  recipe(Direction ~ Lag1 + Lag2, data = dt_train) %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(Lag1:Lag2, -all_outcomes()) %>%
+  step_bs(-Direction)
+```
+
+
++ Hyperparameters.
+
+  - Train the models by starting with the based on the values recommended by the library `dials` and adjusting or fine-tuning them to enhance your models' performance. 
+  - I do not expect you to show all of your experiments (but you are free to show as many as you want), but do explain your parameter choices and how you arrived to them.
+  - For the boosting model: tune the number of trees and the learning rate.
+  - For the random forest: tune the number of attributes (`mtry`) and the number of trees.
+  - For each algorithm, please train at least 20 parameter combinations. You are free to chose the grid of your preference (regular, Latin Hypercube, or a sequential combination of each).
+
+> Guidance: the hyperparameters `trees` and `mtry` must be set to be tuned. Some submissions may use a different engine than ranger.
+
+```{r}
+rf_mod <- 
+  rand_forest(trees = tune(),
+              mtry = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("ranger")
+```
+
+```{r}
+rf_base_wf <- 
+  workflow() %>%
+  add_recipe(rf_base_rec) %>%
+  add_model(rf_mod)
+
+rf_enh_wf <- 
+  workflow() %>%
+  add_recipe(rf_enh_rec) %>%
+  add_model(rf_mod)
+```
+
+
++ Validation results are sufficient. At this point, we have not finished all the model assessments that we would like (SVMs and Neurual Nets will be coming in the next assignment), so we will wait a little longer before testing.
+
+
+> Guidance: the main performance metric to be optimized should come first in the metric set. 
+>
+>+ Kappa (`kap`) and f-measure (`f_meas`) make sense in this context. Kappa will give us accuracy adjusted to randomness and, in a sense, will give us a measure of "skill" of the algorithm. F-measure will give us a combination of precision and recall. If F-measure is chosen, Direction should have "Up" as the first level.
+>+ Precision or Recall could be chosen, but the student needs to be clear as to what is being optimized. This will come out in the summary report. 
+>+ Accuracy could be used, but it will not give a measure adjusted by randomness such as kappa. Accuracy is not a great choice. ROC AUC makes sense for imbalanced classes, but other metrics may be better choices in this case.
+
+
+```{r}
+perf_mx <- metric_set(f_meas, kap, precision, recall, accuracy)
+```
+
+> Guidance: at least one of the ranges should be adjusted. At least 20 levels (overall) should be tested. The function `finalize()` must be run for `mtry`.
+
+```{r}
+rf_grid <- grid_latin_hypercube(
+  trees(range = c(500, 1500)),
+  finalize(mtry(), dt_train),
+  size = 25
+)
+```
+
+> Guidance: 
+>
+>+ Saving predictions is important.
+>+ Run time measures (tic/toc) are not necessary, but helpful. 
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+rf_base_res <-
+  rf_base_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = rf_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+
+tic()
+rf_enh_res <-
+  rf_enh_wf %>%
+  tune_grid(
+    dt_folds, 
+    grid = rf_grid,
+    metrics = perf_mx, 
+    control = tune_ctrl
+  )
+toc()
+stopCluster(cl)
+```
+
+
+> Guidance:
+> 
+>+ An exploration and analysis of results is important. 
+>+ The purpose of the working paper is to justify model selection, so enough analysis to substantiate parameter choices is necessary.
+
+## Base Model Validation Results
+
+> Guidance: in this case, a low number of features and trees maximize f-measure. The model appears to be unstable with intermediate number of features and we may be better off with a different approach.
+
+```{r}
+rf_base_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = trees, y = mean,
+             colour = as_factor(mtry))) +
+  geom_point() +
+  geom_line(aes(group = as_factor(mtry))) +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme_minimal() +
+  guides(colour = guide_legend(title = 'N. Features')) +
+  scale_color_brewer(type = 'seq', palette = 2, direction = -1) +
+  labs(title = "Random Forest Performance",
+       subtitle = "Base Recipe",
+       x = "Trees", y = "Performance Score")
+```
+
+## Base Model Selection
+
+```{r}
+rf_base_res %>%
+  show_best(metric = "f_meas") %>%
+  kable(digits = 4)
+```
+
+## Enhanced Model Validation Results
+
+```{r}
+rf_enh_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = trees, y = mean,
+             colour = as_factor(mtry))) +
+  geom_point() +
+  geom_line(aes(group = as_factor(mtry))) +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme_minimal() +
+  guides(colour = guide_legend(title = 'N. Features')) +
+  scale_color_brewer(type = 'seq', palette = 2, direction = -1) +
+  labs(title = "Random Forest Performance",
+       subtitle = "Enhanced Recipe",
+       x = "Trees", y = "Performance Score")
+```
+
+> Guidance: Similar observations apply as in the case above. Performance is slightly increased by the enhanced model.
+
+## Enhanced Model Selection
+
+```{r}
+rf_enh_res %>%
+  show_best(metric = "f_meas") %>%
+  kable(digits = 4)
+```
+
++ Save your results to an external file.
+
+```{r}
+save(rf_base_wf, rf_base_res, file = "./res/boost_base_res.Rda")
+save(rf_enh_wf, rf_enh_res, file = "./res/boost_enh_res.Rda")
+```

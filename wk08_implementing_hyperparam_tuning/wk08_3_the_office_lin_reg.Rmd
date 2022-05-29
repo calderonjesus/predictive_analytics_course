@@ -1,0 +1,280 @@
+---
+title: "Linear Regression"
+subtitle: "The Office Rating Prediction"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Main Points 
+
+In this example, we will see:
+
++ How to regularize a Linear Regression model using two paramters, penalty and mixture.
++ How to set up an experiment using two hyperparameters.
++ How to display results when working with two hyperparameters.
+
+# Load Libraries and Data
+
+We load the data that we prepared previously.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+# Build a Linear Regression Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+## Recipe
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`:
+
++ Update the role of variable `episode_name` to `'ID'`. This will preclude it from the set of predictors and outcomes.
++ We apply a zero variance filter ([`step_zv()`](https://recipes.tidymodels.org/reference/step_zv.html)) to all numeric predictors.
++ We remove highly correlated variables with ([`step_corr()`](https://recipes.tidymodels.org/reference/step_corr.html)).
++ We are applyling the Box-Cox transformation ([`step_BoxCox()`](https://recipes.tidymodels.org/reference/step_BoxCox.html))
+
+```{r}
+office_lr_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(andy:jan, -all_outcomes()) %>%
+  step_BoxCox(andy:jan, -all_outcomes())
+```
+
+## Model
+
+We define a linear regression model in the standard way, specifying that we will `tune()` the penalty and mixture parameters. 
+
+```{r}
+lr_reg_mod <- 
+  linear_reg(penalty = tune(), mixture = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('glmnet')
+```
+
+## Grid
+
+Here, we can specify a grid in different ways: in this case, we will use a rectangular grid. A rectangular regular grid is created, as we have seen, with the command `grid_regular()`. From the documentation (`?grid_regular`), levels is 
+
+> An integer for the number of values of each parameter to use to make the regular grid. levels can be a single integer or a vector of integers that is the same length as the number of parameters in .... levels can be a named integer vector, with names that match the id values of parameters.
+
+We create a regular grid with 10 levels for each variable.
+
+```{r}
+lr_reg_grid <- grid_regular(penalty(), 
+                            mixture(), 
+                            levels = 8)
+```
+
+Notice that the horizontal axis, penalty, is better shown using a log scale. This is consistent with the default transformation of `penalty()`, which is `log10_trans()` (see `?penalty`).
+
+```{r}
+lr_reg_grid %>%
+  ggplot(aes(x = penalty, y = mixture)) + 
+  geom_point() + 
+  scale_x_log10(labels = label_number()) + 
+  labs(title = 'Regular Grid of Penalty and Mixture',
+       subtitle = 'Regular scales', 
+       x = 'Penalty', 
+       y = 'Mixture') +
+  theme_minimal() 
+```
+
+
+## Workflow
+
+```{r}
+lr_reg_wf <- 
+  workflow() %>%
+  add_recipe(office_lr_rec) %>%
+  add_model(lr_reg_mod)
+```
+
+
+## Tune Grid
+
+
+We tune the grid using a cluster.
+
+```{r}
+library(doParallel)
+
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+lr_reg_res <-
+  lr_reg_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = lr_reg_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+# Results and Model Selection
+
+
+
+```{r, fig.height = 7, fig.widht = 8}
+lr_reg_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = penalty, y = mean, 
+             colour = mixture, group = mixture)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Linear Regression Performance', 
+       subtitle = 'Tuning Penalty', 
+       x = 'Penalty (Log Scale)', y = 'Performance Score')
+```
+
+Alternatively, we can present performance using a countour plot. A contour plot takes a grid of (x, y) coordinates and shades areas based on a value, z, that is a function of x and y. In our case, we know that the mean mae (z) depends on the values of mixture and penalty (x, y).
+
+
+```{r}
+lr_reg_res %>%
+  collect_metrics() %>%
+  filter(.metric %in% c('rmse', 'mae')) %>%
+  ggplot(aes(x = mixture, y = penalty, z = mean)) +
+  geom_contour_filled(alpha = 0.85) + 
+  scale_y_continuous(breaks = extended_breaks(n = 7)) + 
+  scale_x_continuous(breaks = extended_breaks(n = 7)) +
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  guides(fill = guide_legend(title = 'Perf. Value')) +
+  labs(title = 'Linear Regression Performance', 
+       subtitle = 'Tuning Mixture and Penalty', 
+       x = 'Mixture (0-Ridge, 1-Lasso)', y = 'Penalty')
+```
+
+# Model Selection 
+
+```{r}
+lr_reg_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 4,
+        caption = 'Top Models by mae')
+
+```
+
+
+```{r}
+lr_reg_best <- 
+  lr_reg_res %>%
+  select_best( metric = 'rmse')
+lr_reg_best %>%
+  kable(digits = 4, 
+        caption = 'Top Model by RMSE')
+```
+
+```{r}
+lr_reg_by_se <- 
+  lr_reg_res %>%
+  select_by_one_std_err(metric = 'rmse', 'penalty')
+lr_reg_by_se %>%
+  kable(digits = 4, 
+        caption = 'Top Model Adjusted by 1 Std Error (RMSE)')
+```
+
+
+
+```{r}
+lr_reg_res %>%
+  collect_predictions(parameters = lr_reg_best) %>%
+    ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Linear Regression Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+lr_reg_final <-
+  lr_reg_wf %>%
+  finalize_workflow(lr_reg_best)
+```
+
+```{r}
+lr_reg_fit <- lr_reg_final %>% fit(office_train)
+```
+
+
+# Save Model Objects
+
+```{r}
+save(lr_reg_fit, lr_reg_res, lr_reg_wf, file = './data/lr_reg_res.Rda')
+```

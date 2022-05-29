@@ -1,0 +1,266 @@
+---
+title: "Ensemble Methods: Boosting Method"
+subtitle: "The Office Rating Prediction"
+author: "Jesús Calderón"
+date: "20/03/2021"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+
+```
+
+# Main Points
+
+In this document we will discuss:
+
++ How to tune a Boosting Ensemble model controlling on three parameters, number of `trees`, `learn_rate`, and `sample_size`.
++ How to customize regular grids for multi-dimensional testing.
+
+# Load Libraries and Data
+
+We load the data that we prepared previously. You may need to `install.packages('baguette')`.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(baguette)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+# Build a Bagging Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+
+## Recipe
+
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`:
+
++ Update the role of variable `episode_name` to `'ID'`. This will preclude it from the set of predictors and outcomes.
++ We apply a zero variance filter ([`step_zv()`](https://recipes.tidymodels.org/reference/step_zv.html)) to all numeric predictors.
++ We remove highly correlated variables with ([`step_corr()`](https://recipes.tidymodels.org/reference/step_corr.html)).
++ We do not have missing values in our data, therefore we do not need to impute them.
+
+
+```{r}
+office_boost_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_corr(andy:jan, -all_outcomes())
+```
+
+## Model
+
+The boosting model has several parameters for tuning:
+
++ `mtry`: The number of predictors that will be randomly sampled at each split when creating the tree models.
++ `trees`: The number of trees contained in the ensemble.
++ `min_n`: The minimum number of data points in a node that is required for the node to be split further.
++ `tree_depth`: The maximum depth of the tree (i.e. number of splits).
++ `learn_rate`: The rate at which the boosting algorithm adapts from iteration-to-iteration. 
++ `loss_reduction`: The reduction in the loss function required to split further.
++ `sample_size`: The amount of data exposed to the fitting routine.
++ `stop_iter`: The number of iterations without improvement before stopping.
+
+
+```{r}
+boost_mod <- 
+  boost_tree(trees = tune(), 
+             learn_rate = tune(),
+             sample_size = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('xgboost')
+```
+
+## Grid
+
+```{r}
+boost_grid <- grid_regular(
+                  trees(range = c(10, 50)),
+                  learn_rate(range = c(-2, -0.2)),  
+                  sample_prop(range = c(0.6, 0.8)), 
+                  levels = c(5, 5, 3))
+```
+
+
+## Workflow
+
+```{r}
+boost_wf <- 
+  workflow() %>%
+  add_recipe(office_boost_rec) %>%
+  add_model(boost_mod)
+```
+
+
+# Tune Grid
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r, time_it = TRUE}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+boost_res <-
+  boost_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = boost_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+
+```{r}
+boost_res %>%
+  collect_metrics() %>%
+  filter(.metric != 'rsq', mean < 0.6) %>%
+  ggplot(aes(x = trees, y = mean,
+             colour = learn_rate)) +
+  geom_point() + 
+  geom_line(aes(group = learn_rate)) + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_grid(sample_size~.metric, scales = 'free') +
+  theme_minimal() + 
+  labs(title = 'Boosted Trees Performance', 
+       subtitle = 'Panels Arranged by Proportion of Data Sampled and Perfromance Metric', 
+       x = 'Trees', y = 'Performance Score')
+```
+
+```{r}
+boost_res %>%
+  collect_metrics() %>%
+  filter(.metric %in% c('rmse')) %>%
+  ggplot(aes(x = learn_rate, y = trees, z = mean)) +
+  geom_contour_filled(alpha = 0.85) + 
+  scale_y_continuous(breaks = extended_breaks(n = 7)) + 
+  scale_x_continuous(breaks = extended_breaks(n = 7)) +
+  facet_grid(sample_size~.metric, scales = 'free') +
+  theme_minimal() + 
+  guides(fill = guide_legend(title = 'RMSE')) +
+  labs(title = 'Linear Regression Performance', 
+       subtitle = 'Tuning Mixture and Penalty', 
+       x = 'Learning Rate', y = 'Number of Trees')
+```
+
+## Model Selection
+
+```{r}
+boost_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3, 
+        caption = 'Top-Performing Models by RMSE')
+```
+
+
+
+```{r}
+boost_best <- 
+  boost_res %>%
+  select_best( metric = 'rmse')
+boost_best %>%
+  kable(digits = 3, 
+        caption = 'Top Model by RMSE')
+```
+
+```{r}
+boost_by_se <- 
+  boost_res %>%
+  select_by_one_std_err(metric = 'rmse', 'penalty')
+boost_by_se %>%
+  kable(digits = 3, 
+        caption = 'Top Model Adjusted by SE (RMSE)')
+```
+
+
+
+```{r}
+boost_res %>%
+  collect_predictions(parameters = boost_by_se) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Boosted Trees Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+boost_final <-
+  boost_wf %>%
+  finalize_workflow(boost_best)
+
+boost_fit <- boost_final %>%
+  fit(office_train)
+```
+
+
+# Save Model Objects
+
+```{r}
+save(boost_fit, boost_res, boost_wf, file = './data/boost_res.Rda')
+```

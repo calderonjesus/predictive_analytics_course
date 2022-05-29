@@ -1,0 +1,294 @@
+---
+title: "The Office"
+subtitle: "Data Preparation and EDA"
+output: 
+  html_document:
+    theme: flatly
+    toc: FALSE
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+
+# Introduction
+
+This week, we will perform a search for an algorithm to predict the rating a TV series, The Office. We will try to predict each episode's rating based on characteristics such as the number of lines spoken by each character, as well as who were its writer and director. Although it is  not the central focus of this course, data preparation is funndamental in data science. Therefore, we will spend some effort to go through this particular data set.
+
+This analysis will follow the same data preparation steps and a very similar parameter search than the on in [Julia Silge's excellent tutorial *LASSO regression using tidydmodels and #TidyTuesday data for The Office*](https://juliasilge.com/blog/lasso-the-office/). As you can see from Silge's blog post, there are many resources that will walk you through many types of data analysis and preparation. 
+
+Ratings information is provided by the [TidyTuesday](https://github.com/rfordatascience/tidytuesday), a great resource to follow if you would like to explore data analysis in R. According to the [#TidyTuesday's documentation (2020)](https://github.com/rfordatascience/tidytuesday/blob/master/data/2020/2020-03-17/readme.md), the data "comes from the `schrute` R package for The Office transcripts and data.world for IMDB ratings of each episode."
+
+# Set up
+
+We will require a few libraries, install them as necessary:
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(schrute)
+library(knitr)
+```
+
+# Building the Data Set
+
+
+## Loading the Ratings Data
+
+We can obtain the ratings data directly from github.
+
+```{r}
+
+ratings_raw <- read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2020/2020-03-17/office_ratings.csv")
+
+glimpse(ratings_raw)
+```
+
+Then, we clean up the episode names by removing punctuation, digits, and certain words using [regular expressions (regex)](https://en.wikipedia.org/wiki/Regular_expression).
+
+```{r}
+
+remove_regex <- "[:punct:]|[:digit:]|parts |part |the |and"
+
+office_ratings <- ratings_raw %>%
+  transmute(
+    episode_name = str_to_lower(title),
+    episode_name = str_remove_all(episode_name, remove_regex),
+    episode_name = str_trim(episode_name),
+    imdb_rating
+  )
+
+```
+
+## Loading the Show's Scripts
+
+For this step, you will need to install one library: `schrute`. Please run `install.packages('schrute')` in the console. Then run:
+
+
+```{r}
+office_info <- schrute::theoffice %>%
+  mutate(
+    season = as.numeric(season),
+    episode = as.numeric(episode),
+    episode_name = str_to_lower(episode_name),
+    episode_name = str_remove_all(episode_name, remove_regex),
+    episode_name = str_trim(episode_name)
+  ) %>%
+  select(season, episode, episode_name, director, writer, character)
+
+glimpse(office_info)
+```
+
+Notice that the code above also cleans the data:
+
++ Ensures that season and episode are numeric variables.
++ Converts and cleans the episode names to make them similar to the ones in the ratings data (`office_ratings`).
+
+
+## Extract Feature: Character's Lines
+
+In this section, we want to create features for each episode. In particular, we will calculate the number of times that each one of the main character speaks. We need to determine what "main" character means and also count the number of times they speak based on the scripts. To do this:
+
++ Count the number of times that each characters speaks per episode. This is a table with episode name, character name, and `n` the number of times that the character speaks in each episode.
++ Add the total number of times that the character speaks overall. To do this, from the previous result we "count" each time a character appears in the table and weight it by the column `n`.
++ Select characters that speak more than a threshold (800, in this case).
++ Remove the total count.
++ Convert into a wide table, indexed vertically by episode name and horizontally by character name.
+
+
+```{r}
+characters <- office_info %>%
+  count(episode_name, character) %>%
+  add_count(character, wt = n, name = "character_count") %>%
+  filter(character_count > 800) %>%
+  select(-character_count) %>%
+  pivot_wider(
+    names_from = character,
+    values_from = n,
+    values_fill = list(n = 0)
+  ) %>%
+  clean_names()
+
+glimpse(characters)
+```
+
+## Extract Feature: Creator's Names
+
+Following Silge, we extract directors' and writers' names into  a single variable, "creator". The steps are below:
+
++ Obtain the distinct combinations of `episode_name`, `director`, and `writer`.
++ Pivot the table to create a long table, indexing vertically by `episode_name` and combining `director` and `writer` into a key/value pair, called role/person. Sometimes, several names are included, so we apply `separate_rows()`.
++ We add counts of persons and filter based on a threshold (10).
++ Obtain the distinct combinations of episode name and person, while adding a value to pivot on: `person_value`.
++ Pivot to create a wide table, indexed horizontally by person and vertically by episode name. Notice that fill values are 0
+
+
+```{r}
+creators <- office_info %>%
+  distinct(episode_name, director, writer) %>%
+  pivot_longer(director:writer, names_to = "role", values_to = "person") %>%
+  separate_rows(person, sep = ";") %>%
+  add_count(person) %>%
+  filter(n > 10) %>%
+  distinct(episode_name, person) %>%
+  mutate(person_value = 1) %>%
+  pivot_wider(
+    names_from = person,
+    values_from = person_value,
+    values_fill = list(person_value = 0)
+  ) %>%
+  clean_names()
+
+glimpse(creators)
+```
+
+## Merge
+
+Merge the data sets that we created previously: 
+
++ From `office_info` obtain unique identifiers.
++ Inner join ratings and identifiers.
++ Left join with characeters and then again with creators.
++ Replace NAs in counts, since we know that NAs implies that the name did not appear in our data and this information can effectively be encoded with 0.
+
+
+```{r}
+office_id <- office_info %>%
+  distinct(season, episode, episode_name)
+
+office_dt <- office_ratings %>%
+  inner_join(office_id, by = 'episode_name') %>%
+  left_join(characters, by = 'episode_name') %>%
+  left_join(creators, by = 'episode_name') %>%
+  mutate(across(ken_kwapis:justin_spitzer, ~replace_na(.x, 0))) 
+
+glimpse(office_dt)
+```
+
+
+## Save Data
+
+Save the data to an Rda file. 
+
+```{r}
+save(office_dt, file = './data/office.Rda')
+```
+
+# Exploratory Data Analysis
+
+## Ratings
+
+To start getting an understanding of the ratings distribution, we calculate basic descriptive statistics of IMBD ratings across all seasons and episodes.
+
+```{r}
+office_dt %>%
+  summarise(min = min(imdb_rating),
+            q25 = quantile(imdb_rating, 0.25),
+            median = median(imdb_rating),
+            mean = mean(imdb_rating),
+            q75 = quantile(imdb_rating, 0.75),
+            max = max(imdb_rating),
+            iqr = IQR(imdb_rating),
+            sd = sd(imdb_rating)) %>%
+  kable(digits = 2, 
+        caption = 'Descriptive Statistics IMDB Rating')
+```
+
+Likewise, we can get an idea of the rating distribution using a histogram. 
+
+```{r}
+office_dt %>%
+  ggplot(aes(x = imdb_rating)) +
+  geom_histogram(bins = 20, fill = 'skyblue4') +
+  theme_minimal() + 
+  labs(title = 'Ratings distribution', 
+       x = 'IMDB Rating', y = 'Frequency')
+```
+
+# Distribution by Season
+
+The boxplot below shows the distribution of IMBD Ratings per season. A few techniques that we employed:
+
++ We converted season to a factor variable (`factor(season)`) within an `aes()` statement. We want season to be interpreted as a name or label, instead of a number or quantity.
++ The boxplots do not show outliers. We achieve this by using `outlier.alpha = 0`. The fill colour is also set.
++ We overlay all ratings. To give a better view, we add a little jitter to the points position using `position = position_jitter(width = 0.25)`. This function adds random noise of up to 0.25 units in the horizontal direction, and it allows us to avoid points overlapping. The horizontal direction in this case is a factor (they are the labels of variable season), therefore a small amount of jitter can be added without distorting the meaning of the chart.
+
+```{r}
+office_dt %>%
+  ggplot(aes(x = factor(season), y = imdb_rating)) +
+  geom_boxplot(outlier.alpha = 0,
+               fill = 'skyblue') +
+  geom_point(position = position_jitter(width = 0.25)) + 
+  theme_minimal() +
+  labs(title = 'Distribution of Ratings by Season',
+       x = 'Season', y = 'IMDB Rating')
+```
+
+
+
+# Distribution by Episodes
+
+We applied similar techniques to plot ratings per episode.
+
+```{r fig.width = 10}
+office_dt %>%
+  ggplot(aes(x = factor(episode), y = imdb_rating)) +
+  geom_boxplot(outlier.alpha = 0, 
+               fill = 'tomato3') +
+  geom_point(position = position_jitter(width = 0.25)) + 
+  theme_minimal() +
+  labs(title = 'Distribution of Ratings by Episode Numbers', 
+       subtitle = 'Is episode quality periodic during the season?', 
+       x = 'Espidode', y = 'IMDB Rating')
+```
+
+# Distribution by Character
+
+We display the relationships between the involvement of a character in an episode measured as the number of lines per character in the script, as well as a smoothing function ([LOESS](https://en.wikipedia.org/wiki/Local_regression)).
+
+In the chart's specification, we have:
+
++ Selected only a subset of data, then pivoted over the characters' names.
++ The transparency of the points is at 30% and transparency indicates where overlapped points appear.
+
+```{r, fig.height = 10, fig.width = 10}
+office_dt %>%
+  select(imdb_rating, andy:jan) %>%
+  pivot_longer(andy:jan, 
+               names_to = 'character', 
+               values_to='character_count') %>%
+  ggplot(aes(x = character_count, y = imdb_rating)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = 'loess', 
+              colour = 'darkblue') + 
+  facet_wrap(~character, 
+             scales = 'free_x', 
+             ncol = 3) + 
+  theme_minimal() +
+  labs(title = "Characters' Lines per Episode", 
+       x = "Lines per Episode", y = "IMDB Rating")
+```
+
+
+# Distribution by Creator
+
+The distribution of ratings by creator. We use similar techniques as in the cases above to create this chart.
+
+```{r, fig.height = 10, fig.width=10}
+office_dt %>%
+  select(episode_name, imdb_rating, 
+         ken_kwapis:justin_spitzer) %>%
+  pivot_longer(ken_kwapis:justin_spitzer, 
+               names_to = 'creator', 
+               values_to='credit') %>%
+  mutate(credit = ifelse(credit == 1, "Yes", "No")) %>%
+  ggplot(aes(x = credit, y = imdb_rating)) + 
+  geom_boxplot(outlier.alpha = 0) +
+  geom_point(position = position_jitter(width = 0.25), alpha= 0.15) +
+  facet_wrap(~creator, ncol = 3) + 
+  labs(title = 'Distribution of Ratings by Creator', 
+       x = 'Involvement', y = 'IMBD Rating') +
+  theme_minimal()
+```

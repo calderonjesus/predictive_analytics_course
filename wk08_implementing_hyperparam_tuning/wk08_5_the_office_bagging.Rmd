@@ -1,0 +1,269 @@
+---
+title: "Ensemble Methods: Bagging Method"
+subtitle: "The Office Rating Prediction"
+output: 
+  html_document:
+    theme: flatly
+    toc: True
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = TRUE)
+
+```
+
+# Main Points
+
+In this document we will discuss:
+
++ How to tune a Bagged Trees Ensemble model controlling for two parameters, `tree_depth` and `min_n`.
++ Latin Hypercube sampling.
++ How to implement a grid based on a Latin Hypercube.
+
+# Load Libraries and Data
+
+We load the data that we prepared previously. You may need to `install.packages('baguette')`.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(scales)
+library(baguette)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+# Build a Bagging Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+## Recipe
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`:
+
++ Update the role of variable `episode_name` to `'ID'`. This will preclude it from the set of predictors and outcomes.
++ We remove highly correlated variables with ([`step_corr()`](https://recipes.tidymodels.org/reference/step_corr.html)).
+
+
+
+```{r}
+office_bag_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_corr(andy:jan, -all_outcomes())
+```
+
+## Model
+
+The bagging (bootstrap aggregation) model, will sample the data and fit a decision tree model a specified number of times. We set the number of times to resample and fit a decision tree model and observe the following from [Khun and Silge (2021)](https://www.tmwr.org/tuning.html#tuning-parameter-examples):
+
+> Another (perhaps more debatable) counterexample of a parameter that does not need to be tuned is the number of trees in a random forest or bagging model. This value should instead be chosen to be large enough to ensure numerical stability in the results; tuning it cannot improve performance as long as the value is large enough to produce reliable results. For random forests, this value is typically in the thousands while the number of trees needed for bagging is around 50 to 100.
+
+
+In this case, we set the number of resamples to 50 (`times = 50`) and tune for the depth of the trees and the minimum number of observations for a split to occur.
+
+```{r}
+bag_mod <- 
+  bag_tree(tree_depth = tune(), min_n = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('rpart', times = 50)
+```
+
+## Grid using Latin Hypercube
+
+In this case, we may want to consider a sampling method that is not an regular grid, which can be computationally costly. We may want to control, for example, the total number of runs. In this case, we can use a method called Latin Hypercube sampling. 
+
+Latin Hypercube sampling has the following characteristics:
+
++ Generates a near-random sample of parameter values from a multidimensional distribution.
++ A Latin Square (the 2-dimensional version of the Latin Hypercube) is a sampling specification in which each row and each column is only sampled once (see the [Wikipedia entry for more details](https://en.wikipedia.org/wiki/Latin_hypercube_sampling)).
++ Allows us to set the total number of samples, the sampling method takes care of the rest.
+
+
+
+
+```{r}
+bag_grid <- grid_latin_hypercube(tree_depth(range = c(1, 50)),
+                                 min_n(range = c(2, 12)),
+                                 size = 10)
+```
+
+
+To observe the Latin Hypercube grid:
+
+```{r}
+bag_grid %>%
+  ggplot(aes(x = tree_depth, y = min_n)) + 
+  geom_point() + 
+  labs(title = 'Latin Hypercube Grid') +
+  theme_minimal()
+  
+```
+
+
+## Workflow
+
+We create the workflow as usual.
+
+```{r}
+bag_wf <- 
+  workflow() %>%
+  add_recipe(office_bag_rec) %>%
+  add_model(bag_mod)
+```
+
+
+## Tune Grid
+
+Tuning in parallel, as usual.
+
+```{r}
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+```{r, time_it = TRUE}
+tune_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+bag_res <-
+  bag_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = bag_grid,
+    metrics = perf_meas, 
+    control = tune_ctrl
+  )
+toc()
+```
+
+Stop the cluster.
+
+```{r, echo = TRUE}
+# Remember to add this if you are running parallel computations.
+stopCluster(cl)
+```
+
+# Results and Model Selection
+
+In this case, we do not have a rectangular grid, so our usual methods of visualization will be confusing. Therefore, change into point estimates and show errors in error bar. We can use the same colouring scheme as before.
+
+
+```{r}
+bag_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = tree_depth, y = mean,
+             colour = min_n, group = min_n)) +
+  geom_point() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  scale_x_log10() + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'Bagged Trees Performance', 
+       subtitle = 'Tuning Tree Depth', 
+       x = 'Tree Depth', y = 'Performance Score')
+```
+
+
+# Select Best 
+
+```{r}
+bag_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3, 
+        caption = 'Top-Performing Models by RMSE')
+
+```
+
+
+```{r}
+bag_best <- 
+  bag_res %>%
+  select_best( metric = 'rmse')
+bag_best %>%
+  kable(caption = 'Top Performing Model by RMSE')
+```
+
+```{r}
+bag_by_se <- 
+  bag_res %>%
+  select_by_one_std_err(metric = 'rmse', 'penalty')
+bag_by_se %>%
+  kable(caption = 'Top Performing Model Adjusted by SE (RMSE)')
+```
+
+
+
+```{r}
+bag_res %>%
+  collect_predictions(parameters = bag_best) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'Bagged Trees Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+# Finalize Workflow and Train
+
+```{r}
+bag_final <-
+  bag_wf %>%
+  finalize_workflow(bag_best)
+```
+
+```{r}
+bag_fit <- bag_final %>% fit(office_train)
+```
+
+
+# Save Model Objects
+
+```{r}
+save(bag_fit, bag_res, bag_wf, file = './data/bag_res.Rda')
+```

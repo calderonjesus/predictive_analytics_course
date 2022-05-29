@@ -1,0 +1,92 @@
+---
+title: 'Assignment 4: Predicting Stock Returns'
+subtitle: 'Exploratory Data Analysis (1/3)'
+author: "Jesús Calderón"
+date: "02/12/2021"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+
+
+## Exploratory Data Analysis
+
++ Describe the data. You can find a description of the data in the Introduction (pages 2-3) of James et al, [Introduction to Statistical Learning](https://www.statlearning.com/). (As well, you can find some interesting discussion on modelling it in Chapter 4).
++ Display the data using pair plots or other forms of graphical device. 
++ Calculate and show descriptive statistics: include, at least, a measure of centrality (mean or median) and a measure of dispersion (standard deviation or IQR), as well as important quantiles and extremes.
+
+> Guidance: minimum requirements are:
+> 
+> + Brief description of the data, including a description of the variables, number of observations, and date range.
+> + A set of charts showing the potential relationship between predictors and target variable. Charts showing the relationship among predictors are a good addition, but the report should focus on predicting the target variables.
+> + Summary statistics in general should be produced with `group_by()` and `summarise()` operations. Some submissions will use `summary()`, but this function does not show dispersion metrics.
+>
+> As a general observation: correlations are low across predictors and there does not appear to be a discernible relationship between the target variable and any of the predictors.
+
+```{r}
+library(tidyverse)
+library(ISLR)
+library(GGally)
+library(knitr)
+```
+
+```{r}
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today) %>%
+  mutate(Direction = fct_relevel(Direction, 'Up'))
+```
+
+```{r}
+market_dt %>%
+  select(-Year) %>%
+  ggpairs(aes(fill = Direction), progress = FALSE) +
+  scale_fill_brewer(type = 'qual', palette = 2) +
+  theme_minimal() +
+  labs(title = 'Exploratory Data Analysis', 
+       subtitle = 'Pair Plots and Correlations')
+```
+
+
+```{r}
+market_dt %>%
+  select(-Year) %>%
+  pivot_longer(-Direction) %>%
+  group_by(name) %>%
+  summarise(min = min(value),
+            q25 = quantile(value, 0.25),
+            median = median(value),
+            average = mean(value),
+            q75 = quantile(value, 0.75),
+            max = max(value),
+            stdev = sd(value),
+            iqr = IQR(value)) %>%
+  kable(digits = 3, 
+        caption = 'Summary statistics')
+```
+
+
+```{r}
+market_dt %>%
+  select(-Year) %>%
+  pivot_longer(-Direction) %>%
+  group_by(name, Direction) %>%
+  summarise(min = min(value),
+            q25 = quantile(value, 0.25),
+            median = median(value),
+            average = mean(value),
+            q75 = quantile(value, 0.75),
+            max = max(value),
+            stdev = sd(value),
+            iqr = IQR(value)) %>%
+  kable(digits = 3, 
+        caption = 'Summary statistics grouped by Direction')
+```

@@ -1,0 +1,254 @@
+---
+title: "k-NN: a baseline model"
+subtitle: "The Office Rating Prediction"
+output: 
+  html_document:
+    theme: flatly
+    toc: TRUE
+    toc_float: True
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# Main Points 
+
+Through this example, you will learn:
+
++ How to tune the number of neighbours in a k-NN model.
++ How to set up an experiment.
++ How to use the dials library.
++ How to show CV results including standard errors.
++ How to show predicted values vs ground truth.
++ How to save intermediate results.
+
+
+# Load Libraries and Data
+
+We load the data that we prepared previously.
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(doParallel)
+library(knitr)
+library(tictoc)
+
+load('./data/office.Rda')
+```
+
+## Metrics
+
+Prepare a metric set of RMSE, MAE, and R-Squared. We will use RMSE as a decision metric.
+
+```{r}
+perf_meas <-metric_set(rmse, mae, rsq) 
+```
+
+
+## Create Train, Test Data, Resamples
+
+Create initial and CV splits. 
+
+```{r}
+set.seed(123)
+office_split <- initial_split(office_dt, prop = 0.7, strata = season)
+office_train <- training(office_split)
+office_test <- testing(office_split)
+```
+
+```{r}
+set.seed(456)
+office_folds <- office_train %>%
+  vfold_cv(v = 5, repeats = 5, strata = season)
+```
+
+
+# Build a K-NN Workflow
+
+For preprocessing steps, you can start with the recommendations in the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html).
+
+## Recipe
+
+Based on the recommended settings we perform the following preprocessing steps and store them in the recipe `office_knn_rec`:
+
++ Update the role of variable `episode_name` to `'ID'`. This will preclude it from the set of predictors and outcomes.
++ We apply a zero variance filter ([`step_zv()`](https://recipes.tidymodels.org/reference/step_zv.html)) to all numeric predictors.
++ We standardize all variables ([`step_normalize()`](https://recipes.tidymodels.org/reference/step_normalize.html)).
++ We are applyling the Box-Cox transformation ([`step_BoxCox()`](https://recipes.tidymodels.org/reference/step_BoxCox.html))
+
+```{r}
+office_knn_rec <- 
+  recipe(imdb_rating ~ ., data = office_train) %>%
+  update_role(episode_name, new_role = 'ID') %>%
+  step_zv(all_numeric(), -all_outcomes()) %>%
+  step_normalize(all_numeric(), -all_outcomes()) %>%
+  step_BoxCox(andy:jan, -all_outcomes())
+```
+
+## Model
+
+We define a k-NN model in the standard way, specifying that we will `tune()` the number of neighbours using CV. 
+
+```{r}
+knn_mod <- 
+  nearest_neighbor(neighbors = tune()) %>%
+  set_mode('regression') %>%
+  set_engine('kknn')
+```
+
+## Grid
+
+The grid, in this case, is defined using functions from library dials. The functions tend to have the same names as parameters, but it is always a good idea to check the documentation. For the k-nn model, function `neighbors()` will define a range for hyperparameter tuning. Using function `neighbors()` we set the range of neighbors and the numbers of levels to test.
+
+```{r}
+knn_grid <- grid_regular(neighbors(range = c(3, 50)), 
+                         levels = 15)
+```
+
+
+## Workflow
+
+As usual, we can define a workflow and tune it.
+
+```{r}
+knn_wf <- 
+  workflow() %>%
+  add_recipe(office_knn_rec) %>%
+  add_model(knn_mod)
+```
+
+
+## Tune Grid
+
+Set up parallel cluster.
+
+```{r}
+library(doParallel)
+
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+```
+
+Tune grid and save predictions.
+
+```{r}
+knn_ctrl <- control_resamples(save_pred = TRUE)
+
+tic()
+knn_res <-
+  knn_wf %>%
+  tune_grid(
+    office_folds, 
+    grid = knn_grid,
+    metrics = perf_meas, 
+    control = knn_ctrl
+  )
+
+toc()
+```
+
+Stop the cluster. 
+
+**Tip**: I like adding the cluster code encapsulating tuning. This makes it easier to start/stop a cluster during development.
+
+```{r}
+stopCluster(cl)
+```
+
+# Results and Model Selection
+
+We can plot the tuning results, showing the standard error using bars around the metric estimates. Standard error will give us an idea of the estimate's variability.
+
+```{r}
+knn_res %>%
+  collect_metrics() %>%
+  ggplot(aes(x = neighbors, y = mean)) +
+  geom_line() + 
+  geom_errorbar(
+    aes(ymin = mean - std_err, 
+        ymax = mean + std_err)
+  ) + 
+  facet_wrap(~.metric, scales = 'free_y', ncol = 2) +
+  theme_minimal() + 
+  labs(title = 'k-NN Performance', 
+       subtitle = 'Tuning Number of Neighbours', 
+       x = 'Nieghbours', y = 'Performance Score')
+```
+
+
+## Model Selection
+
+We start by showing the performance stats for the top-performing models.
+
+```{r}
+knn_res %>%
+  show_best(metric = 'rmse') %>%
+  kable(digits = 3,
+        caption = 'Top-Performing Models by rmse')
+```
+
+Select the top-performing model:
+
+```{r}
+knn_best <- 
+  select_best(knn_res, metric = 'rmse')
+knn_best %>%
+  kable(caption = 'Top Performing Model')
+```
+
+
+Select the least complex model at one standard error from the best-performing model. In this case, it is the same as the top-performing.
+
+```{r}
+knn_by_se <- 
+  select_by_one_std_err(knn_res, metric = 'rmse', 'neighbors')
+knn_by_se %>%
+  kable(digits = 3, 
+        caption = 'Top Model Adjusted by SE ')
+```
+
+## Show Predictions
+
+We can show the predictions from the CV tests.
+
+```{r}
+knn_res %>%
+  collect_predictions(parameters = knn_by_se) %>%
+  ggplot(aes(x = imdb_rating, y = .pred)) + 
+  geom_point(alpha=.25, 
+             color = 'skyblue4') + 
+  geom_smooth(method = 'loess', 
+              se = FALSE,
+              colour = 'orangered3') + 
+  geom_abline(slope = 1, 
+              intercept = 0, linetype = 2) +
+  scale_x_continuous(breaks = breaks_extended(n = 15)) + 
+  scale_y_continuous(breaks = breaks_extended(n = 7)) + 
+  geom_rug(alpha = 0.25) + 
+  theme_minimal() +
+  labs(title = 'k-NN Predicted and Actual IMBD Ratings', 
+       subtitle = 'Loess Smoothing (solid) and 45 Degree Line (dotted)', 
+       x = 'IMBD Rating', y = 'Predicted Rating')
+```
+
+
+# Finalize Workflow and Train
+
+```{r}
+knn_final <-
+  knn_wf %>%
+  finalize_workflow(knn_by_se)
+```
+
+```{r}
+knn_fit <- knn_final %>% fit(office_train)
+```
+
+# Save Model Objects
+
+```{r}
+save(knn_fit, knn_res, knn_wf, file = './data/knn_res.Rda')
+```

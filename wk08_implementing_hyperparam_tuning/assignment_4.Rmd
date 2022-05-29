@@ -1,0 +1,99 @@
+---
+title: "Assignment 4: Predicting Stock Returns"
+subtitle: "AFM 415: Foundations of Machine Learning"
+output: 
+  html_document:
+    toc: FALSE
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+
+
+
+
+# Introduction
+
+Congratulations. You have been hired by a hedge fund. Your new boss took a PhD course with Gareth James at USC and, as a first task, they ask you to replicate his stock prediction experiments. 
+
+The objective is to forecast if the SP500 will increase or decrease given a history of the last five days' returns, as well as the last day's trading volume. You will work with five years' worth of daily data and you must provide a prediction for the Direction of the SP500, which can be "Up" or "Down". 
+
+Given that you are new to the firm, you will only be allowed to take long positions (i.e., predicting "up" movements correct is of curcial importance); however, if you find that your algorithm performs well for short positions (i.e., it predicts "down" movements with great performance), your report should highlight this fact. Taking a long position means that you will be able to buy the index (say, through an ETF or a future) and you would profit when the "Up" prediction is accurate; conversely, if you were to take a "short position" (borrowing the ETF and selling it, to repurchase it at the end of the day and return it to the original owner), you would profit when the "Down" prediction is accurate.
+
+As a reminder, your boss texts you: "This is a Hedge Fund. We are concerned with making money and we do not really care too much how we make it (but don't do anything illegal). Get me good predictions!"
+
+# General Guidelines
+
+This assignment will be combined with assignment 5 to produce a report of your findings. For this assignment, you will submit three working papers: 
+
+
++ Exploratory Data Analysis
++ Boosted Tree experiments
++ Random Forest experiments.
+
+
+
+## Exploratory Data Analysis
+
++ Describe the data. You can find a description of the data in the Introduction (pages 2-3) of James et al, [Introduction to Statistical Learning](https://www.statlearning.com/). (As well, you can find some interesting discussion on modelling it in Chapter 4).
++ Display the data using pair plots or other forms of graphical device. 
++ Calculate and show descriptive statistics: include, at least, a measure of centrality (mean or median) and a measure of dispersion (standard deviation or IQR), as well as important quantiles and extremes.
+
+## Model Experiments
+
++ You will train and evaluate the following models:
+
+  - Boosting 
+  - Random Forest
+
++ Train your models with a 5-fold cross-validation and 5 repetitions. Set the stratification variable to Direction and decide if Year should be a predictor.
++ Random seeds:
+
+  - Please, use seed 123 for the training/testing partition.
+  - Please, use seed 456 for the cross validation partition.
+
++ Recipes. For each model, try two recipes: 
+  
+  - For each model, consult the [Appendix to Khun and Silge (2021)](https://www.tmwr.org/pre-proc-table.html). Add recipe components as recommended by the text. You can call this the "base" recipe.
+  - In addition to the recipe above, add another recipe with the intention of enahncing performance. Feel free to try any pre-processing step available in [the recipes library](https://recipes.tidymodels.org/reference/index.html). You can call this an "enhanced" recipe.
+ 
++ Hyperparameters.
+
+  - Train the models by starting with the based on the values recommended by the library `dials` and adjusting or fine-tuning them to enhance your models' performance. 
+  - I do not expect you to show all of your experiments (but you are free to show as many as you want), but do explain your parameter choices and how you arrived to them.
+  - For the boosting model: tune the number of trees and the learning rate.
+  - For the random forest: tune the number of attributes (`mtry`) and the number of trees.
+  - For each algorithm, please train at least 20 parameter combinations. You are free to chose the grid of your preference (regular, Latin Hypercube, or a sequential combination of each).
+
++ Validation results are sufficient. At this point, we have not finished all the model assessments that we would like (SVMs and Neurual Nets will be coming in the next assignment), so we will wait a little longer before testing.
+
++ Save your results to an external file.
+
+## A Note on Working papers
+
+These submissions are working papers that will build up to a larger project with the results of our next assignment. The EDA is important and will mostly be transferred verbatum to the final report. However, the working papers are meant to be appendices and not full reports in themselves. Write them accordinigly.
+
+Working documents must be sufficient for a knowledgeable peer to understand and reproduce your work. You can think of them as working papers in an audit file or research report. Add sufficient details and structure for this purpose, but there is not prescribed template that you need to follow.
+
+As a recommendation, create an Rmd file per model family. Each file will have the same components and you can create your own template for this. At the end of cross validation, simply save your results using `save()` as we did in the lectures. Later, in the main report you will be able to `load()` these results to use in your discussion.
+
+Submit your RMD and HTML files (no need to submit the Rda files). Include a floating table of contents in you HTML and display your code. 
+
+
+# Obtaining the Data
+
+You can load the data with the code below.
+
+```{r}
+library(tidyverse)
+library(ISLR)
+
+data(Smarket)
+market_dt <- Smarket %>%
+  as_tibble() %>%
+  select(-Today)
+```
+
+
